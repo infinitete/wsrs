@@ -1,4 +1,4 @@
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::config::Config;
@@ -98,12 +98,24 @@ impl<T: AsyncRead + AsyncWrite + Unpin> WebSocketCodec<T> {
                 }
             }
 
-            let mut temp_buf = [0u8; 4096];
-            let n = self.io.read(&mut temp_buf).await?;
+            self.read_buf.reserve(4096);
+
+            // SAFETY: `chunk_mut()` returns uninitialized memory as `UninitSlice`.
+            // We create a raw slice to pass to `read()`, which only writes to it.
+            // We only advance by the exact number of bytes `read()` reports writing.
+            let buf = self.read_buf.chunk_mut();
+            let buf_slice = unsafe {
+                std::slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len().min(4096))
+            };
+
+            let n = self.io.read(buf_slice).await?;
             if n == 0 {
                 return Err(Error::ConnectionClosed(None));
             }
-            self.read_buf.extend_from_slice(&temp_buf[..n]);
+
+            // SAFETY: `read()` guarantees it initialized exactly `n` bytes.
+            // We advance by `n` to mark those bytes as part of the buffer.
+            unsafe { self.read_buf.advance_mut(n) };
         }
     }
 
