@@ -7,8 +7,6 @@ use crate::error::{Error, Result};
 use crate::protocol::validation::FrameValidator;
 use crate::protocol::Frame;
 
-const DEFAULT_BUFFER_SIZE: usize = 8192;
-
 pub struct WebSocketCodec<T> {
     io: T,
     read_buf: BytesMut,
