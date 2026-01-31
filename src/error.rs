@@ -109,6 +109,40 @@ pub enum Error {
     /// Invalid extension configuration or negotiation.
     #[error("Invalid extension: {0}")]
     InvalidExtension(String),
+
+    /// Invalid HTTP header value (contains CR or LF).
+    #[error("Invalid header value in {header}: {reason}")]
+    InvalidHeaderValue {
+        /// The header name.
+        header: String,
+        /// Reason for rejection.
+        reason: String,
+    },
+
+    /// Payload size exceeds platform maximum (32-bit overflow protection).
+    #[error("Payload size {size} exceeds platform maximum {max}")]
+    PayloadTooLargeForPlatform {
+        /// Actual payload size.
+        size: u64,
+        /// Maximum size for this platform.
+        max: u64,
+    },
+
+    /// Origin not in allowed list (CSWSH protection).
+    #[error("Origin not allowed: {origin}")]
+    OriginNotAllowed {
+        /// The rejected origin.
+        origin: String,
+    },
+
+    /// Handshake data too large (DoS protection).
+    #[error("Handshake too large: {size} bytes (max: {max})")]
+    HandshakeTooLarge {
+        /// Actual handshake size.
+        size: usize,
+        /// Maximum allowed size.
+        max: usize,
+    },
 }
 
 impl From<std::io::Error> for Error {
@@ -151,5 +185,35 @@ mod tests {
         let err = Error::InvalidUtf8;
         let cloned = err.clone();
         assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn test_security_error_variants() {
+        // InvalidHeaderValue
+        let err = Error::InvalidHeaderValue {
+            header: "Sec-WebSocket-Protocol".into(),
+            reason: "contains CRLF".into(),
+        };
+        assert!(err.to_string().contains("Sec-WebSocket-Protocol"));
+
+        // PayloadTooLargeForPlatform
+        let err = Error::PayloadTooLargeForPlatform {
+            size: u64::MAX,
+            max: usize::MAX as u64,
+        };
+        assert!(err.to_string().contains("platform maximum"));
+
+        // OriginNotAllowed
+        let err = Error::OriginNotAllowed {
+            origin: "https://evil.com".into(),
+        };
+        assert!(err.to_string().contains("evil.com"));
+
+        // HandshakeTooLarge
+        let err = Error::HandshakeTooLarge {
+            size: 10000,
+            max: 8192,
+        };
+        assert!(err.to_string().contains("10000"));
     }
 }
