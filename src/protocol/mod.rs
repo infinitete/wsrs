@@ -10,8 +10,8 @@ pub mod validation;
 
 pub use assembler::{AssembledMessage, MessageAssembler};
 pub use frame::Frame;
-pub use handshake::{compute_accept_key, HandshakeRequest, HandshakeResponse, WS_GUID};
+pub use handshake::{HandshakeRequest, HandshakeResponse, WS_GUID, compute_accept_key};
 pub use mask::{apply_mask, apply_mask_fast};
 pub use opcode::OpCode;
-pub use utf8::{validate_utf8, Utf8Validator};
+pub use utf8::{Utf8Validator, validate_utf8};
 pub use validation::FrameValidator;

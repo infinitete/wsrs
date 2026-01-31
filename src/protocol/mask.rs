@@ -291,7 +291,7 @@ mod tests {
         let mask = [0x12, 0x34, 0x56, 0x78];
         let mut data: Vec<u8> = vec![];
         apply_mask(&mut data, mask);
-        assert_eq!(data, vec![]);
+        assert_eq!(data, Vec::<u8>::new());
     }
 
     #[test]
@@ -365,7 +365,7 @@ mod tests {
         let mask = [0x12, 0x34, 0x56, 0x78];
         let mut data: Vec<u8> = vec![];
         apply_mask_simd(&mut data, mask);
-        assert_eq!(data, vec![]);
+        assert_eq!(data, Vec::<u8>::new());
     }
 
     #[test]

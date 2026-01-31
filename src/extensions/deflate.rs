@@ -3,8 +3,8 @@
 use crate::error::{Error, Result};
 use crate::extensions::{Extension, ExtensionParam, RsvBits};
 use crate::protocol::Frame;
-use flate2::read::{DeflateDecoder, DeflateEncoder};
 use flate2::Compression;
+use flate2::read::{DeflateDecoder, DeflateEncoder};
 use std::io::Read;
 
 const MIN_WINDOW_BITS: u8 = 8;
@@ -341,9 +341,11 @@ mod tests {
 
         assert!(ext.config.server_no_context_takeover);
         assert_eq!(ext.config.client_max_window_bits, 12);
-        assert!(response
-            .iter()
-            .any(|p| p.name == "server_no_context_takeover"));
+        assert!(
+            response
+                .iter()
+                .any(|p| p.name == "server_no_context_takeover")
+        );
         assert!(response.iter().any(|p| p.name == "client_max_window_bits"));
     }
 
@@ -386,12 +388,16 @@ mod tests {
         let ext = DeflateExtension::new(config);
         let params = ext.offer_params();
 
-        assert!(params
-            .iter()
-            .any(|p| p.name == "server_no_context_takeover"));
-        assert!(params
-            .iter()
-            .any(|p| p.name == "client_no_context_takeover"));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "server_no_context_takeover")
+        );
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "client_no_context_takeover")
+        );
     }
 
     #[test]

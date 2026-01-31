@@ -194,7 +194,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                 }
                 OpCode::Close => {
                     let close_frame = self.parse_close_frame(&frame);
-                    
+
                     if self.state == ConnectionState::Open {
                         self.state = ConnectionState::Closing;
                         let response = if let Some(ref cf) = close_frame {
@@ -205,7 +205,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                         let _ = self.codec.write_frame(&response).await;
                         let _ = self.codec.flush().await;
                     }
-                    
+
                     self.state = ConnectionState::Closed;
                     return Ok(Some(Message::Close(close_frame)));
                 }
@@ -261,13 +261,19 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
         if payload.len() >= 2 {
             let code = u16::from_be_bytes([payload[0], payload[1]]);
             match std::str::from_utf8(&payload[2..]) {
-                Ok(reason) => Some(CloseFrame::new(CloseCode::from_u16(code), reason.to_owned())),
+                Ok(reason) => Some(CloseFrame::new(
+                    CloseCode::from_u16(code),
+                    reason.to_owned(),
+                )),
                 Err(_) => Some(CloseFrame::new(CloseCode::InvalidPayload, "")),
             }
         } else if payload.is_empty() {
             None
         } else {
-            Some(CloseFrame::new(CloseCode::ProtocolError, "Invalid close frame"))
+            Some(CloseFrame::new(
+                CloseCode::ProtocolError,
+                "Invalid close frame",
+            ))
         }
     }
 
@@ -342,10 +348,7 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn poll_shutdown(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<std::io::Result<()>> {
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
             Poll::Ready(Ok(()))
         }
     }
@@ -387,7 +390,9 @@ mod tests {
     #[tokio::test]
     async fn test_recv_message() {
         // Masked "Hello": mask [0x37, 0xfa, 0x21, 0x3d], payload [0x7f, 0x9f, 0x4d, 0x51, 0x58]
-        let data = vec![0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58];
+        let data = vec![
+            0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58,
+        ];
         let stream = MockStream::new(data);
         let mut conn = Connection::new(stream, Role::Server, Config::server());
 
@@ -416,14 +421,14 @@ mod tests {
         let mut conn = Connection::new(stream, Role::Server, Config::server());
 
         let msg = conn.recv().await.unwrap().unwrap();
-        
+
         match msg {
             Message::Close(Some(cf)) => {
                 assert_eq!(cf.code, CloseCode::Normal);
             }
             _ => panic!("Expected close message"),
         }
-        
+
         assert_eq!(conn.state(), ConnectionState::Closed);
     }
 
@@ -492,7 +497,7 @@ mod tests {
         let mut conn = Connection::new(stream, Role::Server, Config::server());
 
         let _ = conn.recv().await;
-        
+
         let msg = conn.recv().await.unwrap();
         assert!(msg.is_none());
     }
@@ -517,10 +522,7 @@ mod tests {
         let stream = MockStream::new(vec![]);
         let mut conn = Connection::new(stream, Role::Server, Config::server());
 
-        let messages = vec![
-            Message::text("One"),
-            Message::text("Two"),
-        ];
+        let messages = vec![Message::text("One"), Message::text("Two")];
 
         conn.send_batch(messages).await.unwrap();
 

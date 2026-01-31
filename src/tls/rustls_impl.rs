@@ -107,11 +107,7 @@ impl TlsConnector {
         }
     }
 
-    pub async fn connect<S>(
-        &self,
-        domain: &str,
-        stream: S,
-    ) -> Result<TlsStream<S>, TlsError>
+    pub async fn connect<S>(&self, domain: &str, stream: S) -> Result<TlsStream<S>, TlsError>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
@@ -152,8 +148,8 @@ pub fn load_certs_from_file(path: &Path) -> Result<Vec<CertificateDer<'static>>,
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
 
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()?;
+    let certs: Vec<CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
 
     if certs.is_empty() {
         return Err(TlsError::NoCertificatesFound);

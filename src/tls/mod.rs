@@ -14,15 +14,15 @@ mod native;
 
 #[cfg(feature = "tls-rustls")]
 pub use rustls_impl::{
-    load_certs_from_file, load_private_key_from_file, TlsAcceptor, TlsConnector, TlsError,
-    TlsStream,
+    TlsAcceptor, TlsConnector, TlsError, TlsStream, load_certs_from_file,
+    load_private_key_from_file,
 };
 
 #[cfg(feature = "tls-native")]
 pub use native::{
     NativeTlsAcceptor, NativeTlsConnector, NativeTlsError, NativeTlsStream,
-    load_identity_from_pkcs12, load_certificate_from_pem, 
-    load_certificate_from_der, load_identity_from_pem,
+    load_certificate_from_der, load_certificate_from_pem, load_identity_from_pem,
+    load_identity_from_pkcs12,
 };
 
 #[cfg(feature = "tls-rustls")]

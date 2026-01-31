@@ -37,7 +37,7 @@ pub use connection::Connection;
 pub use connection::{ConnectionState, Role};
 pub use error::{Error, Result};
 pub use message::{CloseCode, CloseFrame, Message};
-pub use protocol::{compute_accept_key, HandshakeRequest, HandshakeResponse, OpCode, WS_GUID};
+pub use protocol::{HandshakeRequest, HandshakeResponse, OpCode, WS_GUID, compute_accept_key};
 
 #[cfg(feature = "async-tokio")]
 pub use codec::WebSocketCodec;
