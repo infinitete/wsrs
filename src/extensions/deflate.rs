@@ -3,8 +3,8 @@
 use crate::error::{Error, Result};
 use crate::extensions::{Extension, ExtensionParam, RsvBits};
 use crate::protocol::Frame;
-use flate2::Compression;
 use flate2::read::{DeflateDecoder, DeflateEncoder};
+use flate2::Compression;
 use std::io::Read;
 
 const MIN_WINDOW_BITS: u8 = 8;
@@ -12,12 +12,20 @@ const MAX_WINDOW_BITS: u8 = 15;
 const DEFAULT_WINDOW_BITS: u8 = 15;
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
+/// Configuration for the permessage-deflate extension.
+///
+/// Controls compression parameters like window bits and context takeover.
 #[derive(Debug, Clone)]
 pub struct DeflateConfig {
+    /// If true, server discards compression context after each message.
     pub server_no_context_takeover: bool,
+    /// If true, client discards compression context after each message.
     pub client_no_context_takeover: bool,
+    /// Server's LZ77 sliding window size (8-15, default 15).
     pub server_max_window_bits: u8,
+    /// Client's LZ77 sliding window size (8-15, default 15).
     pub client_max_window_bits: u8,
+    /// Compression level (0-9, default 6). Higher = better compression, slower.
     pub compression_level: u32,
 }
 
@@ -34,20 +42,28 @@ impl Default for DeflateConfig {
 }
 
 impl DeflateConfig {
+    /// Create a new configuration with default values.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set server_no_context_takeover (builder pattern).
     pub fn server_no_context_takeover(mut self, value: bool) -> Self {
         self.server_no_context_takeover = value;
         self
     }
 
+    /// Set client_no_context_takeover (builder pattern).
     pub fn client_no_context_takeover(mut self, value: bool) -> Self {
         self.client_no_context_takeover = value;
         self
     }
 
+    /// Set server_max_window_bits (8-15).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::InvalidExtension` if bits is not in range 8-15.
     pub fn server_max_window_bits(mut self, bits: u8) -> Result<Self> {
         if !(MIN_WINDOW_BITS..=MAX_WINDOW_BITS).contains(&bits) {
             return Err(Error::InvalidExtension(format!(
@@ -59,6 +75,11 @@ impl DeflateConfig {
         Ok(self)
     }
 
+    /// Set client_max_window_bits (8-15).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::InvalidExtension` if bits is not in range 8-15.
     pub fn client_max_window_bits(mut self, bits: u8) -> Result<Self> {
         if !(MIN_WINDOW_BITS..=MAX_WINDOW_BITS).contains(&bits) {
             return Err(Error::InvalidExtension(format!(
@@ -70,6 +91,11 @@ impl DeflateConfig {
         Ok(self)
     }
 
+    /// Set compression level (0-9).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::InvalidExtension` if level is greater than 9.
     pub fn compression_level(mut self, level: u32) -> Result<Self> {
         if level > 9 {
             return Err(Error::InvalidExtension(format!(
@@ -82,12 +108,16 @@ impl DeflateConfig {
     }
 }
 
+/// Permessage-deflate WebSocket extension (RFC 7692).
+///
+/// Compresses data frames to reduce bandwidth usage.
 pub struct DeflateExtension {
     config: DeflateConfig,
     negotiated: bool,
 }
 
 impl DeflateExtension {
+    /// Create a new extension with the given configuration.
     pub fn new(config: DeflateConfig) -> Self {
         Self {
             config,
@@ -95,6 +125,7 @@ impl DeflateExtension {
         }
     }
 
+    /// Create a client-side extension.
     pub fn client(config: DeflateConfig) -> Self {
         Self {
             config,
@@ -102,6 +133,7 @@ impl DeflateExtension {
         }
     }
 
+    /// Create a server-side extension.
     pub fn server(config: DeflateConfig) -> Self {
         Self {
             config,
@@ -341,11 +373,9 @@ mod tests {
 
         assert!(ext.config.server_no_context_takeover);
         assert_eq!(ext.config.client_max_window_bits, 12);
-        assert!(
-            response
-                .iter()
-                .any(|p| p.name == "server_no_context_takeover")
-        );
+        assert!(response
+            .iter()
+            .any(|p| p.name == "server_no_context_takeover"));
         assert!(response.iter().any(|p| p.name == "client_max_window_bits"));
     }
 
@@ -388,16 +418,12 @@ mod tests {
         let ext = DeflateExtension::new(config);
         let params = ext.offer_params();
 
-        assert!(
-            params
-                .iter()
-                .any(|p| p.name == "server_no_context_takeover")
-        );
-        assert!(
-            params
-                .iter()
-                .any(|p| p.name == "client_no_context_takeover")
-        );
+        assert!(params
+            .iter()
+            .any(|p| p.name == "server_no_context_takeover"));
+        assert!(params
+            .iter()
+            .any(|p| p.name == "client_no_context_takeover"));
     }
 
     #[test]

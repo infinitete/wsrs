@@ -23,6 +23,10 @@ fn random_mask_seed() -> u32 {
     }
 }
 
+/// WebSocket frame encoder/decoder over an async I/O stream.
+///
+/// Handles low-level frame reading/writing with automatic masking (for clients)
+/// and validation according to RFC 6455.
 pub struct WebSocketCodec<T> {
     io: T,
     read_buf: BytesMut,
@@ -34,6 +38,7 @@ pub struct WebSocketCodec<T> {
 }
 
 impl<T> WebSocketCodec<T> {
+    /// Create a new codec wrapping the given I/O stream.
     #[must_use]
     pub fn new(io: T, role: Role, config: Config) -> Self {
         let validator = FrameValidator::new(role, config.limits.clone())
@@ -49,11 +54,13 @@ impl<T> WebSocketCodec<T> {
         }
     }
 
+    /// Get the role (Client or Server) of this codec.
     #[must_use]
     pub fn role(&self) -> Role {
         self.role
     }
 
+    /// Get a reference to the configuration.
     #[must_use]
     pub fn config(&self) -> &Config {
         &self.config
@@ -137,6 +144,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> WebSocketCodec<T> {
         }
     }
 
+    /// Write a frame to the underlying stream (does not flush).
+    ///
+    /// Clients automatically mask the frame; servers send unmasked.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Io` if the write fails.
     pub async fn write_frame(&mut self, frame: &Frame) -> Result<()> {
         let mask = if self.role.must_mask() {
             Some(self.generate_mask())
@@ -153,11 +167,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> WebSocketCodec<T> {
         Ok(())
     }
 
+    /// Flush any buffered data to the underlying stream.
     pub async fn flush(&mut self) -> Result<()> {
         self.io.flush().await?;
         Ok(())
     }
 
+    /// Consume the codec and return the underlying I/O stream.
     #[must_use]
     pub fn into_inner(self) -> T {
         self.io

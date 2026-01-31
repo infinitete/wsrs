@@ -249,6 +249,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
             return Ok(());
         }
 
+        if code.is_reserved() {
+            return Err(Error::InvalidCloseCode(code.as_u16()));
+        }
+
         self.state = ConnectionState::Closing;
         let frame = Frame::close(Some(code.as_u16()), reason);
         self.codec.write_frame(&frame).await?;
