@@ -5,8 +5,8 @@
 use bytes::Bytes;
 
 use crate::error::{Error, Result};
-use crate::protocol::mask::apply_mask;
 use crate::protocol::OpCode;
+use crate::protocol::mask::apply_mask;
 
 /// Maximum payload size for control frames (RFC 6455).
 pub const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
@@ -183,9 +183,14 @@ impl Frame {
                         needed: 10 - buf.len(),
                     });
                 }
-                let len = u64::from_be_bytes([
+                let len_u64 = u64::from_be_bytes([
                     buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
-                ]) as usize;
+                ]);
+                let len =
+                    usize::try_from(len_u64).map_err(|_| Error::PayloadTooLargeForPlatform {
+                        size: len_u64,
+                        max: usize::MAX as u64,
+                    })?;
                 (len, 10)
             }
             _ => unreachable!(),
@@ -202,8 +207,13 @@ impl Frame {
             });
         }
 
-        // Calculate total frame size
-        let total_size = total_header_size + payload_len;
+        // Calculate total frame size (use checked arithmetic to prevent overflow)
+        let total_size = total_header_size.checked_add(payload_len).ok_or(
+            Error::PayloadTooLargeForPlatform {
+                size: payload_len as u64,
+                max: usize::MAX as u64,
+            },
+        )?;
 
         // Check if we have the complete frame
         if buf.len() < total_size {
@@ -296,9 +306,14 @@ impl Frame {
                         needed: 10 - buf.len(),
                     });
                 }
-                let len = u64::from_be_bytes([
+                let len_u64 = u64::from_be_bytes([
                     buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
-                ]) as usize;
+                ]);
+                let len =
+                    usize::try_from(len_u64).map_err(|_| Error::PayloadTooLargeForPlatform {
+                        size: len_u64,
+                        max: usize::MAX as u64,
+                    })?;
                 (len, 10)
             }
             _ => unreachable!(),
@@ -1001,5 +1016,42 @@ mod tests {
             }
             Payload::Owned(_) => panic!("Expected Payload::Shared for unmasked zero-copy parse"),
         }
+    }
+
+    // --------------------------------------------------------------------------
+    // Test 35: Payload exceeds platform max (32-bit overflow protection)
+    // --------------------------------------------------------------------------
+    #[test]
+    fn test_payload_exceeds_platform_max() {
+        // Construct a frame header claiming u64::MAX length
+        // 0x82 = binary final, 0xFF = masked + 127 (64-bit length follows)
+        let mut data = vec![0x82, 0xFF];
+        // Add 8 bytes of u64::MAX
+        data.extend_from_slice(&u64::MAX.to_be_bytes());
+        // Add 4 bytes mask key
+        data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+
+        let result = Frame::parse(&data);
+
+        // On 64-bit platforms: IncompleteFrame (usize::MAX is huge)
+        // On 32-bit platforms: PayloadTooLargeForPlatform
+        // Either way, it must be an error and not panic
+        assert!(result.is_err());
+    }
+
+    // --------------------------------------------------------------------------
+    // Test 36: Large valid payload header still parses correctly
+    // --------------------------------------------------------------------------
+    #[test]
+    fn test_large_valid_payload_header() {
+        // Test normal large payload still works
+        // 0x82 = binary final, 0x7E = 16-bit length (300)
+        let mut data = vec![0x82, 0x7E, 0x01, 0x2C]; // 300 bytes
+        data.extend_from_slice(&vec![0xAB; 300]);
+
+        let result = Frame::parse(&data);
+        assert!(result.is_ok());
+        let (frame, _) = result.unwrap();
+        assert_eq!(frame.payload().len(), 300);
     }
 }
