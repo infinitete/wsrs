@@ -1,4 +1,4 @@
-use rsws::{compute_accept_key, CloseCode, Config, Connection, HandshakeResponse, Message, Role};
+use rsws::{CloseCode, Config, Connection, HandshakeResponse, Message, Role, compute_accept_key};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -49,7 +49,11 @@ impl ClientMetrics {
     }
 
     fn elapsed(&self) -> Duration {
-        self.start_time.lock().unwrap().map(|t| t.elapsed()).unwrap_or_default()
+        self.start_time
+            .lock()
+            .unwrap()
+            .map(|t| t.elapsed())
+            .unwrap_or_default()
     }
 
     fn connection_attempted(&self) {
@@ -76,7 +80,8 @@ impl ClientMetrics {
 
     fn message_received(&self, size: usize, latency: Duration) {
         self.messages_received.fetch_add(1, Ordering::Relaxed);
-        self.bytes_received.fetch_add(size as u64, Ordering::Relaxed);
+        self.bytes_received
+            .fetch_add(size as u64, Ordering::Relaxed);
         if let Ok(mut latencies) = self.latencies_us.lock() {
             latencies.push(latency.as_micros() as u64);
         }
@@ -109,9 +114,21 @@ impl ClientMetrics {
         let rx_bytes = self.bytes_received.load(Ordering::Relaxed);
         let errors = self.errors.load(Ordering::Relaxed);
 
-        let msg_rate = if elapsed > 0.0 { received as f64 / elapsed } else { 0.0 };
-        let tx_rate = if elapsed > 0.0 { tx_bytes as f64 / elapsed / 1024.0 / 1024.0 } else { 0.0 };
-        let rx_rate = if elapsed > 0.0 { rx_bytes as f64 / elapsed / 1024.0 / 1024.0 } else { 0.0 };
+        let msg_rate = if elapsed > 0.0 {
+            received as f64 / elapsed
+        } else {
+            0.0
+        };
+        let tx_rate = if elapsed > 0.0 {
+            tx_bytes as f64 / elapsed / 1024.0 / 1024.0
+        } else {
+            0.0
+        };
+        let rx_rate = if elapsed > 0.0 {
+            rx_bytes as f64 / elapsed / 1024.0 / 1024.0
+        } else {
+            0.0
+        };
 
         let p50 = self.percentile(0.50);
         let p95 = self.percentile(0.95);
@@ -121,35 +138,77 @@ impl ClientMetrics {
         println!("╔══════════════════════════════════════════════════════════════╗");
         println!("║                    CLIENT METRICS                            ║");
         println!("╠══════════════════════════════════════════════════════════════╣");
-        println!("║  Duration:            {:>10.3}s                           ║", elapsed);
+        println!(
+            "║  Duration:            {:>10.3}s                           ║",
+            elapsed
+        );
         println!("╠══════════════════════════════════════════════════════════════╣");
         println!("║  CONNECTIONS                                                 ║");
-        println!("║    Attempted:         {:>10}                             ║", attempted);
-        println!("║    Successful:        {:>10}                             ║", successful);
-        println!("║    Failed:            {:>10}                             ║", failed);
-        println!("║    Active:            {:>10}                             ║", active);
+        println!(
+            "║    Attempted:         {:>10}                             ║",
+            attempted
+        );
+        println!(
+            "║    Successful:        {:>10}                             ║",
+            successful
+        );
+        println!(
+            "║    Failed:            {:>10}                             ║",
+            failed
+        );
+        println!(
+            "║    Active:            {:>10}                             ║",
+            active
+        );
         println!("╠══════════════════════════════════════════════════════════════╣");
         println!("║  MESSAGES                                                    ║");
-        println!("║    Sent:              {:>10}                             ║", sent);
-        println!("║    Received:          {:>10}                             ║", received);
-        println!("║    Rate:              {:>10.1} msg/s                      ║", msg_rate);
+        println!(
+            "║    Sent:              {:>10}                             ║",
+            sent
+        );
+        println!(
+            "║    Received:          {:>10}                             ║",
+            received
+        );
+        println!(
+            "║    Rate:              {:>10.1} msg/s                      ║",
+            msg_rate
+        );
         println!("╠══════════════════════════════════════════════════════════════╣");
         println!("║  THROUGHPUT                                                  ║");
-        println!("║    TX:                {:>10.2} MB/s                       ║", tx_rate);
-        println!("║    RX:                {:>10.2} MB/s                       ║", rx_rate);
+        println!(
+            "║    TX:                {:>10.2} MB/s                       ║",
+            tx_rate
+        );
+        println!(
+            "║    RX:                {:>10.2} MB/s                       ║",
+            rx_rate
+        );
         println!("╠══════════════════════════════════════════════════════════════╣");
         println!("║  LATENCY (round-trip)                                        ║");
         if let Some(p) = p50 {
-            println!("║    P50:               {:>10.3} ms                        ║", p.as_secs_f64() * 1000.0);
+            println!(
+                "║    P50:               {:>10.3} ms                        ║",
+                p.as_secs_f64() * 1000.0
+            );
         }
         if let Some(p) = p95 {
-            println!("║    P95:               {:>10.3} ms                        ║", p.as_secs_f64() * 1000.0);
+            println!(
+                "║    P95:               {:>10.3} ms                        ║",
+                p.as_secs_f64() * 1000.0
+            );
         }
         if let Some(p) = p99 {
-            println!("║    P99:               {:>10.3} ms                        ║", p.as_secs_f64() * 1000.0);
+            println!(
+                "║    P99:               {:>10.3} ms                        ║",
+                p.as_secs_f64() * 1000.0
+            );
         }
         println!("╠══════════════════════════════════════════════════════════════╣");
-        println!("║  Errors:              {:>10}                             ║", errors);
+        println!(
+            "║  Errors:              {:>10}                             ║",
+            errors
+        );
         println!("╚══════════════════════════════════════════════════════════════╝");
     }
 
@@ -170,9 +229,23 @@ impl ClientMetrics {
 
         println!(
             r#"{{"duration_secs":{:.3},"connections":{{"attempted":{},"successful":{},"failed":{}}},"messages":{{"sent":{},"received":{},"rate":{:.1}}},"bytes":{{"sent":{},"received":{}}},"latency_us":{{"p50":{},"p95":{},"p99":{}}},"errors":{}}}"#,
-            elapsed, attempted, successful, failed, sent, received,
-            if elapsed > 0.0 { received as f64 / elapsed } else { 0.0 },
-            tx_bytes, rx_bytes, p50_us, p95_us, p99_us, errors
+            elapsed,
+            attempted,
+            successful,
+            failed,
+            sent,
+            received,
+            if elapsed > 0.0 {
+                received as f64 / elapsed
+            } else {
+                0.0
+            },
+            tx_bytes,
+            rx_bytes,
+            p50_us,
+            p95_us,
+            p99_us,
+            errors
         );
     }
 }
@@ -241,7 +314,8 @@ fn parse_args() -> TestConfig {
             }
             "--connect-timeout" => {
                 if i + 1 < args.len() {
-                    connect_timeout_secs = args[i + 1].parse().unwrap_or(DEFAULT_CONNECT_TIMEOUT_SECS);
+                    connect_timeout_secs =
+                        args[i + 1].parse().unwrap_or(DEFAULT_CONNECT_TIMEOUT_SECS);
                     i += 1;
                 }
             }
@@ -266,8 +340,12 @@ fn parse_args() -> TestConfig {
                 println!("    -c, --clients <N>          Number of clients [default: 1000]");
                 println!("    -m, --messages <N>         Messages per client [default: 100]");
                 println!("    -s, --size <BYTES>         Message size in bytes [default: 128]");
-                println!("        --max-concurrent <N>   Max concurrent connections [default: 200]");
-                println!("        --connect-timeout <S>  Connection timeout in seconds [default: 30]");
+                println!(
+                    "        --max-concurrent <N>   Max concurrent connections [default: 200]"
+                );
+                println!(
+                    "        --connect-timeout <S>  Connection timeout in seconds [default: 30]"
+                );
                 println!("        --warmup <MS>          Warmup delay in ms [default: 100]");
                 println!("    -j, --json                 Output results as JSON");
                 println!("        --help                 Show this help");
@@ -437,10 +515,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("║           WebSocket Stress Test Client                       ║");
         println!("╠══════════════════════════════════════════════════════════════╣");
         println!("║  Target:              {:>38} ║", config.server_addr);
-        println!("║  Clients:             {:>10}                             ║", config.num_clients);
-        println!("║  Messages/client:     {:>10}                             ║", config.messages_per_client);
-        println!("║  Message size:        {:>10} bytes                       ║", config.message_size);
-        println!("║  Max concurrent:      {:>10}                             ║", config.max_concurrent);
+        println!(
+            "║  Clients:             {:>10}                             ║",
+            config.num_clients
+        );
+        println!(
+            "║  Messages/client:     {:>10}                             ║",
+            config.messages_per_client
+        );
+        println!(
+            "║  Message size:        {:>10} bytes                       ║",
+            config.message_size
+        );
+        println!(
+            "║  Max concurrent:      {:>10}                             ║",
+            config.max_concurrent
+        );
         println!("╚══════════════════════════════════════════════════════════════╝");
         println!();
         println!("Starting stress test...");
@@ -502,10 +592,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!();
         if successful == config.num_clients as u64 && total_messages == expected_messages {
-            println!("✓ Test PASSED: All {} clients completed successfully", config.num_clients);
+            println!(
+                "✓ Test PASSED: All {} clients completed successfully",
+                config.num_clients
+            );
         } else {
-            println!("✗ Test FAILED: Expected {} clients/{} messages, got {}/{}", 
-                     config.num_clients, expected_messages, successful, total_messages);
+            println!(
+                "✗ Test FAILED: Expected {} clients/{} messages, got {}/{}",
+                config.num_clients, expected_messages, successful, total_messages
+            );
         }
     }
 

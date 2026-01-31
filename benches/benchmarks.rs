@@ -2,13 +2,13 @@
 //!
 //! Run with: `cargo bench`
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use rsws::Config;
+use rsws::protocol::OpCode;
 use rsws::protocol::assembler::MessageAssembler;
 use rsws::protocol::frame::Frame;
-use rsws::protocol::handshake::{compute_accept_key, HandshakeRequest, HandshakeResponse};
+use rsws::protocol::handshake::{HandshakeRequest, HandshakeResponse, compute_accept_key};
 use rsws::protocol::mask::{apply_mask, apply_mask_fast, apply_mask_simd};
-use rsws::protocol::OpCode;
-use rsws::Config;
 
 // =============================================================================
 // Frame Parsing Benchmarks

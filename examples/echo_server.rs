@@ -70,7 +70,10 @@ async fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error + 
                 conn.send(Message::binary(data)).await?;
             }
             Some(Message::Ping(data)) => {
-                println!("  Received ping ({} bytes) - pong sent automatically", data.len());
+                println!(
+                    "  Received ping ({} bytes) - pong sent automatically",
+                    data.len()
+                );
                 // Pong is sent automatically by Connection::recv()
             }
             Some(Message::Pong(data)) => {

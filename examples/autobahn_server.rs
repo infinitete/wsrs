@@ -75,7 +75,7 @@ async fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error + 
     let mut config = Config::server();
     config.limits.max_message_size = 64 * 1024 * 1024;
     config.limits.max_frame_size = 64 * 1024 * 1024;
-    
+
     let mut conn = Connection::new(stream, Role::Server, config);
 
     while conn.is_open() {

@@ -1,7 +1,7 @@
 use rsws::{Config, Connection, HandshakeRequest, HandshakeResponse, Message, Role};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -44,7 +44,8 @@ impl ServerMetrics {
 
     fn message_echoed(&self, size: usize) {
         self.messages_echoed.fetch_add(1, Ordering::Relaxed);
-        self.bytes_received.fetch_add(size as u64, Ordering::Relaxed);
+        self.bytes_received
+            .fetch_add(size as u64, Ordering::Relaxed);
         self.bytes_sent.fetch_add(size as u64, Ordering::Relaxed);
     }
 
@@ -61,21 +62,57 @@ impl ServerMetrics {
         let tx_bytes = self.bytes_sent.load(Ordering::Relaxed);
         let errors = self.errors.load(Ordering::Relaxed);
 
-        let msg_rate = if elapsed > 0.0 { messages as f64 / elapsed } else { 0.0 };
-        let rx_rate = if elapsed > 0.0 { rx_bytes as f64 / elapsed / 1024.0 / 1024.0 } else { 0.0 };
-        let tx_rate = if elapsed > 0.0 { tx_bytes as f64 / elapsed / 1024.0 / 1024.0 } else { 0.0 };
+        let msg_rate = if elapsed > 0.0 {
+            messages as f64 / elapsed
+        } else {
+            0.0
+        };
+        let rx_rate = if elapsed > 0.0 {
+            rx_bytes as f64 / elapsed / 1024.0 / 1024.0
+        } else {
+            0.0
+        };
+        let tx_rate = if elapsed > 0.0 {
+            tx_bytes as f64 / elapsed / 1024.0 / 1024.0
+        } else {
+            0.0
+        };
 
         println!("\n╔══════════════════════════════════════════════════════════════╗");
         println!("║                    SERVER METRICS                            ║");
         println!("╠══════════════════════════════════════════════════════════════╣");
-        println!("║  Uptime:              {:>10.1}s                           ║", elapsed);
-        println!("║  Connections total:   {:>10}                             ║", total);
-        println!("║  Connections active:  {:>10}                             ║", active);
-        println!("║  Messages echoed:     {:>10}                             ║", messages);
-        println!("║  Message rate:        {:>10.1} msg/s                      ║", msg_rate);
-        println!("║  RX throughput:       {:>10.2} MB/s                       ║", rx_rate);
-        println!("║  TX throughput:       {:>10.2} MB/s                       ║", tx_rate);
-        println!("║  Errors:              {:>10}                             ║", errors);
+        println!(
+            "║  Uptime:              {:>10.1}s                           ║",
+            elapsed
+        );
+        println!(
+            "║  Connections total:   {:>10}                             ║",
+            total
+        );
+        println!(
+            "║  Connections active:  {:>10}                             ║",
+            active
+        );
+        println!(
+            "║  Messages echoed:     {:>10}                             ║",
+            messages
+        );
+        println!(
+            "║  Message rate:        {:>10.1} msg/s                      ║",
+            msg_rate
+        );
+        println!(
+            "║  RX throughput:       {:>10.2} MB/s                       ║",
+            rx_rate
+        );
+        println!(
+            "║  TX throughput:       {:>10.2} MB/s                       ║",
+            tx_rate
+        );
+        println!(
+            "║  Errors:              {:>10}                             ║",
+            errors
+        );
         println!("╚══════════════════════════════════════════════════════════════╝\n");
     }
 
@@ -90,8 +127,18 @@ impl ServerMetrics {
 
         println!(
             r#"{{"uptime_secs":{:.3},"connections_total":{},"connections_active":{},"messages_echoed":{},"bytes_received":{},"bytes_sent":{},"errors":{},"msg_per_sec":{:.1}}}"#,
-            elapsed, total, active, messages, rx_bytes, tx_bytes, errors,
-            if elapsed > 0.0 { messages as f64 / elapsed } else { 0.0 }
+            elapsed,
+            total,
+            active,
+            messages,
+            rx_bytes,
+            tx_bytes,
+            errors,
+            if elapsed > 0.0 {
+                messages as f64 / elapsed
+            } else {
+                0.0
+            }
         );
     }
 }
@@ -233,7 +280,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("║           WebSocket Stress Test Server                       ║");
         println!("╠══════════════════════════════════════════════════════════════╣");
         println!("║  Listening on: {:>44} ║", addr);
-        println!("║  Report interval: {:>4}s                                     ║", report_interval);
+        println!(
+            "║  Report interval: {:>4}s                                     ║",
+            report_interval
+        );
         println!("╚══════════════════════════════════════════════════════════════╝");
         println!();
         println!("Waiting for connections... (Ctrl+C to stop)");

@@ -3,7 +3,7 @@
 //! Run the echo server first: cargo run --example echo_server
 //! Then run: cargo run --example client
 
-use rsws::{compute_accept_key, CloseCode, Config, Connection, HandshakeResponse, Message, Role};
+use rsws::{CloseCode, Config, Connection, HandshakeResponse, Message, Role, compute_accept_key};
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;

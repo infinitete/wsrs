@@ -14,7 +14,7 @@ fn main() {
 mod inner {
     use rsws::tls::TlsConnector;
     use rsws::{
-        compute_accept_key, CloseCode, Config, Connection, HandshakeResponse, Message, Role,
+        CloseCode, Config, Connection, HandshakeResponse, Message, Role, compute_accept_key,
     };
     use rustls::ClientConfig;
     use std::error::Error;
