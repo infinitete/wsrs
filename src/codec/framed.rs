@@ -4,8 +4,24 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::config::Config;
 use crate::connection::Role;
 use crate::error::{Error, Result};
-use crate::protocol::validation::FrameValidator;
 use crate::protocol::Frame;
+use crate::protocol::validation::FrameValidator;
+
+/// Generate a random seed for mask generation.
+/// Falls back to system time if getrandom fails.
+fn random_mask_seed() -> u32 {
+    let mut buf = [0u8; 4];
+    if getrandom::getrandom(&mut buf).is_ok() {
+        u32::from_le_bytes(buf)
+    } else {
+        // Fallback to system time
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u32)
+            .unwrap_or(0x12345678)
+    }
+}
 
 pub struct WebSocketCodec<T> {
     io: T,
@@ -28,7 +44,7 @@ impl<T> WebSocketCodec<T> {
             write_buf: BytesMut::with_capacity(config.write_buffer_size),
             role,
             config,
-            mask_counter: 0,
+            mask_counter: random_mask_seed(),
             validator,
         }
     }
@@ -72,18 +88,23 @@ impl<T: AsyncRead + AsyncWrite + Unpin> WebSocketCodec<T> {
                     126 if self.read_buf.len() >= 4 => {
                         Some(u16::from_be_bytes([self.read_buf[2], self.read_buf[3]]) as usize)
                     }
-                    127 if self.read_buf.len() >= 10 => {
-                        Some(u64::from_be_bytes([
-                            self.read_buf[2], self.read_buf[3], self.read_buf[4], self.read_buf[5],
-                            self.read_buf[6], self.read_buf[7], self.read_buf[8], self.read_buf[9],
-                        ]) as usize)
-                    }
+                    127 if self.read_buf.len() >= 10 => Some(u64::from_be_bytes([
+                        self.read_buf[2],
+                        self.read_buf[3],
+                        self.read_buf[4],
+                        self.read_buf[5],
+                        self.read_buf[6],
+                        self.read_buf[7],
+                        self.read_buf[8],
+                        self.read_buf[9],
+                    ]) as usize),
                     _ => None,
                 };
 
                 // Validate if we have enough bytes to determine payload length
                 if let Some(len) = payload_len {
-                    self.validator.validate_incoming(masked, rsv1, rsv2, rsv3, len)?;
+                    self.validator
+                        .validate_incoming(masked, rsv1, rsv2, rsv3, len)?;
                 }
 
                 match Frame::parse(&self.read_buf) {
@@ -102,9 +123,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> WebSocketCodec<T> {
             // We create a raw slice to pass to `read()`, which only writes to it.
             // We only advance by the exact number of bytes `read()` reports writing.
             let buf = self.read_buf.chunk_mut();
-            let buf_slice = unsafe {
-                std::slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len().min(4096))
-            };
+            let buf_slice =
+                unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len().min(4096)) };
 
             let n = self.io.read(buf_slice).await?;
             if n == 0 {
@@ -203,10 +223,7 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn poll_shutdown(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<std::io::Result<()>> {
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
             Poll::Ready(Ok(()))
         }
     }
@@ -251,7 +268,9 @@ mod tests {
     async fn test_read_frame() {
         // Server receives masked frame from client: "Hello"
         // Mask: [0x37, 0xfa, 0x21, 0x3d], Masked payload: [0x7f, 0x9f, 0x4d, 0x51, 0x58]
-        let data = vec![0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58];
+        let data = vec![
+            0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58,
+        ];
         let stream = MockStream::new(data);
         let mut codec = WebSocketCodec::new(stream, Role::Server, Config::server());
 
@@ -338,5 +357,57 @@ mod tests {
 
         let result = codec.read_frame().await;
         assert!(matches!(result, Err(Error::ConnectionClosed(None))));
+    }
+
+    #[tokio::test]
+    async fn test_mask_not_zero_initially() {
+        // 创建多个 codec，验证掩码不全为零
+        // 注意：理论上可能随机到 0，但概率极低
+        let mut found_nonzero = false;
+        for _ in 0..10 {
+            let stream = MockStream::new(vec![]);
+            let mut codec = WebSocketCodec::new(stream, Role::Client, Config::client());
+
+            // 通过 write_frame 触发掩码生成
+            let frame = Frame::text(b"test".to_vec());
+            let _ = codec.write_frame(&frame).await;
+
+            let written = codec.io.written();
+            if written.len() >= 6 {
+                let mask = &written[2..6];
+                if mask != [0, 0, 0, 0] {
+                    found_nonzero = true;
+                    break;
+                }
+            }
+        }
+        // 10次尝试中至少应该有一次非零掩码
+        assert!(found_nonzero, "Mask should not always be zero");
+    }
+
+    #[tokio::test]
+    async fn test_masks_differ_between_codecs() {
+        // 创建两个 codec，它们的初始掩码应该不同
+        use std::collections::HashSet;
+
+        let mut masks = HashSet::new();
+        for _ in 0..5 {
+            let stream = MockStream::new(vec![]);
+            let mut codec = WebSocketCodec::new(stream, Role::Client, Config::client());
+
+            let frame = Frame::text(b"x".to_vec());
+            let _ = codec.write_frame(&frame).await;
+
+            let written = codec.io.written();
+            if written.len() >= 6 {
+                let mask: [u8; 4] = [written[2], written[3], written[4], written[5]];
+                masks.insert(mask);
+            }
+        }
+        // 5 个不同的 codec 应该产生至少 2 个不同的掩码
+        assert!(
+            masks.len() >= 2,
+            "Different codecs should produce different masks"
+        );
     }
 }
