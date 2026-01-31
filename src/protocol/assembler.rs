@@ -121,7 +121,7 @@ mod tests {
     }
 
     fn small_limits_config() -> Config {
-        Config::new().with_limits(Limits::new(1024, 100, 3))
+        Config::new().with_limits(Limits::new(1024, 100, 3, 4096))
     }
 
     #[test]

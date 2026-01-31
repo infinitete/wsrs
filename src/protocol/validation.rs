@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_rejects_frame_exceeding_limit() {
-        let limits = Limits::new(1024, 4096, 10); // 1KB max frame
+        let limits = Limits::new(1024, 4096, 10, 8192); // 1KB max frame
         let validator = FrameValidator::new(Role::Server, limits);
 
         let result = validator.validate_incoming(
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_accepts_frame_within_limit() {
-        let limits = Limits::new(1024, 4096, 10);
+        let limits = Limits::new(1024, 4096, 10, 8192);
         let validator = FrameValidator::new(Role::Server, limits);
 
         let result = validator.validate_incoming(
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_accepts_frame_at_exact_limit() {
-        let limits = Limits::new(1024, 4096, 10);
+        let limits = Limits::new(1024, 4096, 10, 8192);
         let validator = FrameValidator::new(Role::Server, limits);
 
         let result = validator.validate_incoming(
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_rsv_checked_before_size() {
-        let limits = Limits::new(100, 1000, 10);
+        let limits = Limits::new(100, 1000, 10, 8192);
         let validator = FrameValidator::new(Role::Server, limits);
 
         let result = validator.validate_incoming(
