@@ -1,6 +1,6 @@
 //! Test client utility for connecting to WebSocket servers.
 
-use rsws::{compute_accept_key, CloseCode, Config, Connection, HandshakeResponse, Message, Role};
+use rsws::{CloseCode, Config, Connection, HandshakeResponse, Message, Role, compute_accept_key};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -18,8 +18,9 @@ pub struct TestClient {
 
 impl TestClient {
     /// Connect to a WebSocket server at the given address.
-    pub async fn connect(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>
-    {
+    pub async fn connect(
+        addr: SocketAddr,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Self::connect_with_id(addr, 0).await
     }
 
@@ -126,8 +127,9 @@ impl TestClient {
     }
 
     /// Receive any message.
-    pub async fn recv(&mut self) -> Result<Option<Message>, Box<dyn std::error::Error + Send + Sync>>
-    {
+    pub async fn recv(
+        &mut self,
+    ) -> Result<Option<Message>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(self.conn.recv().await?)
     }
 

@@ -5,8 +5,8 @@
 mod harness;
 
 use harness::{Latencies, Metrics, TestClient, TestServer};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -25,7 +25,10 @@ const MESSAGES_PER_CLIENT: usize = 10;
 #[ignore]
 async fn test_stress_connections() {
     let num_clients = get_stress_client_count();
-    println!("Stress test: {} clients, {} max concurrent", num_clients, MAX_CONCURRENT);
+    println!(
+        "Stress test: {} clients, {} max concurrent",
+        num_clients, MAX_CONCURRENT
+    );
 
     let (server, addr) = TestServer::spawn().await;
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));

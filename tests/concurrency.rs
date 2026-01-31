@@ -5,8 +5,8 @@
 mod harness;
 
 use harness::{Metrics, TestClient, TestServer};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Barrier;
 use tokio::task::JoinSet;
 
