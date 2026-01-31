@@ -3,12 +3,26 @@
 //! This module handles the HTTP Upgrade mechanism for establishing WebSocket connections.
 
 use crate::error::{Error, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 
 /// The WebSocket GUID used in the Sec-WebSocket-Accept calculation (RFC 6455).
 pub const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// Validate that a header value does not contain CR or LF characters.
+///
+/// # Errors
+/// Returns `Error::InvalidHeaderValue` if the value contains `\r` or `\n`.
+fn validate_header_value(header_name: &str, value: &str) -> Result<()> {
+    if value.contains('\r') || value.contains('\n') {
+        return Err(Error::InvalidHeaderValue {
+            header: header_name.to_string(),
+            reason: "contains CR or LF characters".to_string(),
+        });
+    }
+    Ok(())
+}
 
 /// Computes the Sec-WebSocket-Accept value from the client's Sec-WebSocket-Key.
 ///
@@ -29,6 +43,34 @@ pub fn compute_accept_key(key: &str) -> String {
     hasher.update(WS_GUID.as_bytes());
     let hash = hasher.finalize();
     BASE64.encode(hash)
+}
+
+/// Validate the Origin header against a list of allowed origins.
+///
+/// # Arguments
+/// * `origin` - The Origin header value from the request (may be None)
+/// * `allowed` - List of allowed origin values
+///
+/// # Errors
+/// Returns `Error::OriginNotAllowed` if:
+/// - `allowed` is not empty and `origin` doesn't match any value
+/// - `allowed` is not empty and `origin` is None
+///
+/// If `allowed` is empty, any origin (or no origin) is accepted.
+pub fn validate_origin(origin: Option<&str>, allowed: &[String]) -> Result<()> {
+    if allowed.is_empty() {
+        return Ok(());
+    }
+
+    match origin {
+        Some(o) if allowed.iter().any(|a| a == o) => Ok(()),
+        Some(o) => Err(Error::OriginNotAllowed {
+            origin: o.to_string(),
+        }),
+        None => Err(Error::OriginNotAllowed {
+            origin: "(none)".to_string(),
+        }),
+    }
 }
 
 /// Parsed WebSocket handshake request from client.
@@ -98,12 +140,32 @@ impl HandshakeRequest {
 
         // Parse headers into a case-insensitive map
         let mut headers: HashMap<String, String> = HashMap::new();
+        let security_headers = [
+            "host",
+            "upgrade",
+            "connection",
+            "sec-websocket-key",
+            "sec-websocket-version",
+        ];
+
         for line in lines {
             if line.is_empty() {
                 break;
             }
             if let Some((name, value)) = line.split_once(':') {
-                headers.insert(name.trim().to_lowercase(), value.trim().to_string());
+                let name_lower = name.trim().to_lowercase();
+
+                // Detect duplicate security-critical headers
+                if security_headers.contains(&name_lower.as_str())
+                    && headers.contains_key(&name_lower)
+                {
+                    return Err(Error::InvalidHandshake(format!(
+                        "Duplicate header: {}",
+                        name.trim()
+                    )));
+                }
+
+                headers.insert(name_lower, value.trim().to_string());
             }
         }
 
@@ -219,6 +281,22 @@ impl HandshakeRequest {
 
         Ok(())
     }
+
+    /// Parse a handshake request with size limit.
+    ///
+    /// # Errors
+    ///
+    /// - `Error::HandshakeTooLarge` if data exceeds max_size
+    /// - Other handshake errors as per `parse()`
+    pub fn parse_with_limit(data: &[u8], max_size: usize) -> Result<Self> {
+        if data.len() > max_size {
+            return Err(Error::HandshakeTooLarge {
+                size: data.len(),
+                max: max_size,
+            });
+        }
+        Self::parse(data)
+    }
 }
 
 /// WebSocket handshake response from server.
@@ -243,21 +321,27 @@ impl HandshakeResponse {
     }
 
     /// Write the HTTP response to a buffer.
-    pub fn write(&self, buf: &mut Vec<u8>) {
+    ///
+    /// # Errors
+    /// Returns `Error::InvalidHeaderValue` if protocol or extensions contain CR/LF.
+    pub fn write(&self, buf: &mut Vec<u8>) -> Result<()> {
         buf.extend_from_slice(b"HTTP/1.1 101 Switching Protocols\r\n");
         buf.extend_from_slice(b"Upgrade: websocket\r\n");
         buf.extend_from_slice(b"Connection: Upgrade\r\n");
         buf.extend_from_slice(format!("Sec-WebSocket-Accept: {}\r\n", self.accept).as_bytes());
 
         if let Some(ref proto) = self.protocol {
+            validate_header_value("Sec-WebSocket-Protocol", proto)?;
             buf.extend_from_slice(format!("Sec-WebSocket-Protocol: {}\r\n", proto).as_bytes());
         }
 
         for ext in &self.extensions {
+            validate_header_value("Sec-WebSocket-Extensions", ext)?;
             buf.extend_from_slice(format!("Sec-WebSocket-Extensions: {}\r\n", ext).as_bytes());
         }
 
         buf.extend_from_slice(b"\r\n");
+        Ok(())
     }
 
     /// Parse a WebSocket handshake response from raw HTTP data.
@@ -488,7 +572,7 @@ mod tests {
         };
 
         let mut buf = Vec::new();
-        resp.write(&mut buf);
+        resp.write(&mut buf).unwrap();
         let response_str = String::from_utf8(buf).unwrap();
 
         assert!(response_str.contains("HTTP/1.1 101 Switching Protocols"));
@@ -534,7 +618,7 @@ mod tests {
 
         // Write response
         let mut buf = Vec::new();
-        resp.write(&mut buf);
+        resp.write(&mut buf).unwrap();
 
         // Parse response
         let parsed_resp = HandshakeResponse::parse(&buf).unwrap();
@@ -545,7 +629,37 @@ mod tests {
         assert_eq!(parsed_resp.accept, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
     }
 
-    // Test 11: Case-insensitive header parsing
+    #[test]
+    fn test_origin_allowed() {
+        let allowed = vec![
+            "https://example.com".to_string(),
+            "https://app.example.com".to_string(),
+        ];
+        assert!(validate_origin(Some("https://example.com"), &allowed).is_ok());
+        assert!(validate_origin(Some("https://app.example.com"), &allowed).is_ok());
+    }
+
+    #[test]
+    fn test_origin_not_allowed() {
+        let allowed = vec!["https://example.com".to_string()];
+        let result = validate_origin(Some("https://evil.com"), &allowed);
+        assert!(matches!(result, Err(Error::OriginNotAllowed { .. })));
+    }
+
+    #[test]
+    fn test_origin_missing_when_required() {
+        let allowed = vec!["https://example.com".to_string()];
+        let result = validate_origin(None, &allowed);
+        assert!(matches!(result, Err(Error::OriginNotAllowed { .. })));
+    }
+
+    #[test]
+    fn test_origin_validation_disabled() {
+        let allowed: Vec<String> = vec![];
+        assert!(validate_origin(Some("https://anything.com"), &allowed).is_ok());
+        assert!(validate_origin(None, &allowed).is_ok());
+    }
+
     #[test]
     fn test_case_insensitive_headers() {
         let request = b"GET /chat HTTP/1.1\r\n\
@@ -560,6 +674,37 @@ mod tests {
         assert_eq!(req.host, "server.example.com");
         assert_eq!(req.key, "dGhlIHNhbXBsZSBub25jZQ==");
         assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn test_duplicate_host_header_rejected() {
+        let request = b"GET / HTTP/1.1\r\n\
+Host: example.com\r\n\
+Host: evil.com\r\n\
+Upgrade: websocket\r\n\
+Connection: Upgrade\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+Sec-WebSocket-Version: 13\r\n\r\n";
+
+        let result = HandshakeRequest::parse(request);
+        assert!(matches!(
+            result,
+            Err(Error::InvalidHandshake(msg)) if msg.contains("Duplicate")
+        ));
+    }
+
+    #[test]
+    fn test_handshake_too_large() {
+        let large_data = vec![b'A'; 10000];
+        let result = HandshakeRequest::parse_with_limit(&large_data, 8192);
+        assert!(matches!(result, Err(Error::HandshakeTooLarge { .. })));
+    }
+
+    #[test]
+    fn test_handshake_at_limit() {
+        let valid = b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        let result = HandshakeRequest::parse_with_limit(valid, 8192);
+        assert!(result.is_ok());
     }
 
     // Test 12: Invalid HTTP method
@@ -626,5 +771,42 @@ mod tests {
         assert!(
             matches!(err, Error::InvalidHandshake(msg) if msg.contains("Sec-WebSocket-Accept"))
         );
+    }
+
+    #[test]
+    fn test_crlf_in_protocol_rejected() {
+        let response = HandshakeResponse {
+            accept: "dGhlIHNhbXBsZSBub25jZQ==".to_string(),
+            protocol: Some("chat\r\nX-Injected: evil".to_string()),
+            extensions: vec![],
+        };
+        let mut buf = Vec::new();
+        let result = response.write(&mut buf);
+        assert!(matches!(result, Err(Error::InvalidHeaderValue { .. })));
+    }
+
+    #[test]
+    fn test_crlf_in_extension_rejected() {
+        let response = HandshakeResponse {
+            accept: "dGhlIHNhbXBsZSBub25jZQ==".to_string(),
+            protocol: None,
+            extensions: vec!["permessage-deflate\nX-Evil: bad".to_string()],
+        };
+        let mut buf = Vec::new();
+        let result = response.write(&mut buf);
+        assert!(matches!(result, Err(Error::InvalidHeaderValue { .. })));
+    }
+
+    #[test]
+    fn test_valid_protocol_accepted() {
+        let response = HandshakeResponse {
+            accept: "dGhlIHNhbXBsZSBub25jZQ==".to_string(),
+            protocol: Some("chat".to_string()),
+            extensions: vec!["permessage-deflate".to_string()],
+        };
+        let mut buf = Vec::new();
+        let result = response.write(&mut buf);
+        assert!(result.is_ok());
+        assert!(!buf.is_empty());
     }
 }
