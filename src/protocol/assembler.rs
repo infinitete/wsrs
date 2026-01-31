@@ -8,6 +8,9 @@ use crate::protocol::utf8::Utf8Validator;
 use crate::protocol::{Frame, OpCode};
 
 /// Reassembles fragmented WebSocket messages.
+///
+/// Handles message fragmentation per RFC 6455, including UTF-8 validation
+/// for text messages and enforcement of size/fragment limits.
 pub struct MessageAssembler {
     buffer: BytesMut,
     fragment_count: usize,
@@ -18,6 +21,7 @@ pub struct MessageAssembler {
 }
 
 impl MessageAssembler {
+    /// Create a new message assembler with the given configuration.
     pub fn new(config: Config) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -30,7 +34,16 @@ impl MessageAssembler {
     }
 
     /// Add a frame to the message being assembled.
-    /// Returns Some(complete_message) when FIN=1, None otherwise.
+    ///
+    /// Returns `Some(AssembledMessage)` when FIN=1, `None` otherwise.
+    /// Control frames are ignored (return `None`).
+    ///
+    /// # Errors
+    ///
+    /// - `Error::ProtocolViolation` if fragmentation rules are violated
+    /// - `Error::TooManyFragments` if fragment limit exceeded
+    /// - `Error::MessageTooLarge` if message size limit exceeded
+    /// - `Error::InvalidUtf8` if text message contains invalid UTF-8
     pub fn push(&mut self, frame: Frame) -> Result<Option<AssembledMessage>> {
         if frame.opcode.is_control() {
             return Ok(None);
@@ -82,10 +95,12 @@ impl MessageAssembler {
         }
     }
 
+    /// Returns `true` if a message is currently being assembled.
     pub fn is_assembling(&self) -> bool {
         self.opcode.is_some()
     }
 
+    /// Reset the assembler, discarding any partial message.
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.fragment_count = 0;
@@ -97,15 +112,23 @@ impl MessageAssembler {
 
 /// A fully assembled WebSocket message.
 pub struct AssembledMessage {
+    /// The opcode of the original message (Text or Binary).
     pub opcode: OpCode,
+    /// The complete message payload.
     pub payload: Vec<u8>,
 }
 
 impl AssembledMessage {
+    /// Convert payload to String. Only valid for text messages.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::InvalidUtf8` if the payload is not valid UTF-8.
     pub fn into_text(self) -> Result<String> {
         String::from_utf8(self.payload).map_err(|_| Error::InvalidUtf8)
     }
 
+    /// Get the payload as raw bytes.
     pub fn into_binary(self) -> Vec<u8> {
         self.payload
     }

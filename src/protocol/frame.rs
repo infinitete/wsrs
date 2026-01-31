@@ -5,8 +5,8 @@
 use bytes::Bytes;
 
 use crate::error::{Error, Result};
+use crate::protocol::mask::{apply_mask, apply_mask_simd};
 use crate::protocol::OpCode;
-use crate::protocol::mask::apply_mask;
 
 /// Maximum payload size for control frames (RFC 6455).
 pub const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
@@ -240,7 +240,7 @@ impl Frame {
         let payload = if let Some(mask) = mask_key {
             // Must copy and unmask
             let mut data = buf[payload_start..payload_end].to_vec();
-            apply_mask(&mut data, mask);
+            apply_mask_simd(&mut data, mask);
             Payload::Owned(data)
         } else {
             // Copy for owned variant (zero-copy would use borrowed, but requires lifetime)
@@ -328,7 +328,13 @@ impl Frame {
             });
         }
 
-        let total_size = total_header_size + payload_len;
+        let total_size =
+            total_header_size
+                .checked_add(payload_len)
+                .ok_or(Error::FrameTooLarge {
+                    size: payload_len,
+                    max: usize::MAX - total_header_size,
+                })?;
 
         if buf.len() < total_size {
             return Err(Error::IncompleteFrame {
@@ -351,7 +357,7 @@ impl Frame {
         let payload_end = payload_start + payload_len;
         let payload = if let Some(mask) = mask_key {
             let mut data = buf[payload_start..payload_end].to_vec();
-            apply_mask(&mut data, mask);
+            apply_mask_simd(&mut data, mask);
             Payload::Owned(data)
         } else {
             Payload::Shared(buf.slice(payload_start..payload_end))
