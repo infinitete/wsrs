@@ -1,12 +1,7 @@
-//! Test harness utilities for high-concurrency WebSocket testing.
-//!
-//! This module provides reusable components for stress testing and
-//! concurrency validation of the rsws WebSocket library.
+//! Test harness utilities for concurrency and stress testing.
 
-mod client;
-mod metrics;
-mod server;
+pub mod server;
+pub mod client;
+pub mod metrics;
 
-pub use client::TestClient;
-pub use metrics::{Latencies, Metrics};
-pub use server::TestServer;
+// Re-exports will be added as modules are implemented
