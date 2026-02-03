@@ -1,5 +1,8 @@
 # rsws - 生产级 WebSocket 库
 
+[![CI](https://github.com/infinitete/rust-ws/actions/workflows/ci.yml/badge.svg)](https://github.com/infinitete/rust-ws/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 [English](README.md) | 中文
 
 `rsws` 是一个高性能、符合 RFC 6455 标准的 Rust WebSocket 协议库。专为生产环境设计，具有零拷贝解析、异步优先架构和全面的安全特性。

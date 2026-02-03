@@ -1,5 +1,8 @@
 # rsws - Production-Grade WebSocket Library
 
+[![CI](https://github.com/infinitete/rust-ws/actions/workflows/ci.yml/badge.svg)](https://github.com/infinitete/rust-ws/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 English | [中文](README_CN.md)
 
 `rsws` is a high-performance, RFC 6455 compliant WebSocket protocol library for Rust. Designed for production use with zero-copy parsing, async-first architecture, and comprehensive security features.
