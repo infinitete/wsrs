@@ -3,14 +3,13 @@
 use crate::error::{Error, Result};
 use crate::extensions::{Extension, ExtensionParam, RsvBits};
 use crate::protocol::Frame;
-use flate2::read::{DeflateDecoder, DeflateEncoder};
-use flate2::Compression;
-use std::io::Read;
+use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress};
 
 const MIN_WINDOW_BITS: u8 = 8;
 const MAX_WINDOW_BITS: u8 = 15;
 const DEFAULT_WINDOW_BITS: u8 = 15;
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
+const MAX_COMPRESSION_ITERATIONS: usize = 100_000;
 
 /// Configuration for the permessage-deflate extension.
 ///
@@ -48,12 +47,14 @@ impl DeflateConfig {
     }
 
     /// Set server_no_context_takeover (builder pattern).
+    #[must_use]
     pub fn server_no_context_takeover(mut self, value: bool) -> Self {
         self.server_no_context_takeover = value;
         self
     }
 
     /// Set client_no_context_takeover (builder pattern).
+    #[must_use]
     pub fn client_no_context_takeover(mut self, value: bool) -> Self {
         self.client_no_context_takeover = value;
         self
@@ -111,47 +112,123 @@ impl DeflateConfig {
 /// Permessage-deflate WebSocket extension (RFC 7692).
 ///
 /// Compresses data frames to reduce bandwidth usage.
+///
+/// This struct maintains persistent encoder/decoder state for LZ77 context takeover,
+/// allowing the compression dictionary to be reused across messages for better
+/// compression ratios.
 pub struct DeflateExtension {
     config: DeflateConfig,
     negotiated: bool,
+    /// Whether this extension is used on the server side.
+    is_server: bool,
+    /// Persistent compression state for context takeover.
+    encoder: Option<Compress>,
+    /// Persistent decompression state for context takeover.
+    decoder: Option<Decompress>,
 }
 
 impl DeflateExtension {
     /// Create a new extension with the given configuration.
-    pub fn new(config: DeflateConfig) -> Self {
+    pub fn new(config: DeflateConfig, is_server: bool) -> Self {
         Self {
             config,
             negotiated: false,
+            is_server,
+            encoder: None,
+            decoder: None,
         }
     }
 
     /// Create a client-side extension.
     pub fn client(config: DeflateConfig) -> Self {
-        Self {
-            config,
-            negotiated: false,
-        }
+        Self::new(config, false)
     }
 
     /// Create a server-side extension.
     pub fn server(config: DeflateConfig) -> Self {
-        Self {
-            config,
-            negotiated: false,
-        }
+        Self::new(config, true)
     }
 
-    fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn ensure_encoder(&mut self) -> &mut Compress {
+        if self.encoder.is_none() {
+            let window_bits = if self.is_server {
+                self.config.server_max_window_bits
+            } else {
+                self.config.client_max_window_bits
+            };
+            let compression = Compression::new(self.config.compression_level);
+            self.encoder = Some(Compress::new_with_window_bits(
+                compression,
+                false, // raw deflate, no zlib header
+                window_bits,
+            ));
+        }
+        self.encoder.as_mut().unwrap()
+    }
+
+    pub(crate) fn ensure_decoder(&mut self) -> &mut Decompress {
+        if self.decoder.is_none() {
+            let window_bits = if self.is_server {
+                self.config.client_max_window_bits
+            } else {
+                self.config.server_max_window_bits
+            };
+            self.decoder = Some(Decompress::new_with_window_bits(
+                false, // raw deflate, no zlib header
+                window_bits,
+            ));
+        }
+        self.decoder.as_mut().unwrap()
+    }
+
+    fn compress(&mut self, data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
         }
 
-        let compression = Compression::new(self.config.compression_level);
-        let mut encoder = DeflateEncoder::new(data, compression);
-        let mut compressed = Vec::new();
-        encoder
-            .read_to_end(&mut compressed)
-            .map_err(|e| Error::Extension(format!("Compression failed: {}", e)))?;
+        let encoder = self.ensure_encoder();
+        let mut compressed = Vec::with_capacity(data.len());
+        let mut input_pos = 0;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_COMPRESSION_ITERATIONS {
+                return Err(Error::Extension(
+                    "Compression exceeded max iterations".into(),
+                ));
+            }
+            let remaining = &data[input_pos..];
+            if remaining.is_empty() {
+                break;
+            }
+
+            let old_len = compressed.len();
+            compressed.resize(old_len + 4096, 0);
+
+            let before_in = encoder.total_in();
+            let before_out = encoder.total_out();
+
+            let flush = if input_pos + remaining.len() >= data.len() {
+                FlushCompress::Sync
+            } else {
+                FlushCompress::None
+            };
+
+            encoder
+                .compress(remaining, &mut compressed[old_len..], flush)
+                .map_err(|e| Error::Extension(format!("Compression failed: {}", e)))?;
+
+            let consumed = (encoder.total_in() - before_in) as usize;
+            let produced = (encoder.total_out() - before_out) as usize;
+
+            compressed.truncate(old_len + produced);
+            input_pos += consumed;
+
+            if consumed == 0 && produced == 0 {
+                break;
+            }
+        }
 
         if compressed.len() >= DEFLATE_TRAILER.len()
             && compressed[compressed.len() - 4..] == DEFLATE_TRAILER
@@ -159,22 +236,70 @@ impl DeflateExtension {
             compressed.truncate(compressed.len() - 4);
         }
 
+        if (self.is_server && self.config.server_no_context_takeover)
+            || (!self.is_server && self.config.client_no_context_takeover)
+        {
+            self.encoder = None;
+        }
+
         Ok(compressed)
     }
 
-    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
+    fn decompress(&mut self, data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut with_trailer = data.to_vec();
-        with_trailer.extend_from_slice(&DEFLATE_TRAILER);
+        let mut input = data.to_vec();
+        input.extend_from_slice(&DEFLATE_TRAILER);
 
-        let mut decoder = DeflateDecoder::new(with_trailer.as_slice());
-        let mut decompressed = Vec::new();
-        decoder
-            .read_to_end(&mut decompressed)
-            .map_err(|e| Error::Extension(format!("Decompression failed: {}", e)))?;
+        let decoder = self.ensure_decoder();
+        let mut decompressed = Vec::with_capacity(data.len() * 4);
+        let mut input_pos = 0;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_COMPRESSION_ITERATIONS {
+                return Err(Error::Extension(
+                    "Decompression exceeded max iterations".into(),
+                ));
+            }
+            let remaining_input = &input[input_pos..];
+            if remaining_input.is_empty() {
+                break;
+            }
+
+            let old_len = decompressed.len();
+            decompressed.resize(old_len + 4096, 0);
+
+            let before_in = decoder.total_in();
+            let before_out = decoder.total_out();
+
+            let status = decoder
+                .decompress(
+                    remaining_input,
+                    &mut decompressed[old_len..],
+                    FlushDecompress::Sync,
+                )
+                .map_err(|e| Error::Extension(format!("Decompression failed: {}", e)))?;
+
+            let consumed = (decoder.total_in() - before_in) as usize;
+            let produced = (decoder.total_out() - before_out) as usize;
+
+            decompressed.truncate(old_len + produced);
+            input_pos += consumed;
+
+            if status == flate2::Status::StreamEnd || produced == 0 {
+                break;
+            }
+        }
+
+        if (self.is_server && self.config.client_no_context_takeover)
+            || (!self.is_server && self.config.server_no_context_takeover)
+        {
+            self.decoder = None;
+        }
 
         Ok(decompressed)
     }
@@ -202,8 +327,22 @@ impl DeflateExtension {
     }
 }
 
+// SAFETY: `flate2::Compress` and `flate2::Decompress` are Send + Sync when using
+// the default miniz_oxide backend (pure Rust). The zlib feature also uses thread-safe
+// implementations. We verify this at compile time below.
 unsafe impl Send for DeflateExtension {}
 unsafe impl Sync for DeflateExtension {}
+
+// Compile-time verification that flate2 types are Send + Sync
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    const fn assert_sync<T: Sync>() {}
+    // These will fail to compile if Compress/Decompress are not Send+Sync
+    assert_send::<flate2::Compress>();
+    assert_sync::<flate2::Compress>();
+    assert_send::<flate2::Decompress>();
+    assert_sync::<flate2::Decompress>();
+};
 
 impl Extension for DeflateExtension {
     fn name(&self) -> &str {
@@ -345,24 +484,26 @@ mod tests {
 
     #[test]
     fn test_compression_roundtrip() {
-        let mut ext = DeflateExtension::new(DeflateConfig::default());
-        ext.negotiated = true;
+        let mut client_ext = DeflateExtension::client(DeflateConfig::default());
+        let mut server_ext = DeflateExtension::server(DeflateConfig::default());
+        client_ext.negotiated = true;
+        server_ext.negotiated = true;
 
         let original_data = b"Hello, WebSocket compression! This is a test message.".to_vec();
         let mut frame = Frame::text(original_data.clone());
 
-        ext.encode(&mut frame).unwrap();
+        client_ext.encode(&mut frame).unwrap();
         assert!(frame.rsv1);
         assert_ne!(frame.payload(), &original_data[..]);
 
-        ext.decode(&mut frame).unwrap();
+        server_ext.decode(&mut frame).unwrap();
         assert!(!frame.rsv1);
         assert_eq!(frame.payload(), &original_data[..]);
     }
 
     #[test]
     fn test_parameter_negotiation() {
-        let mut ext = DeflateExtension::new(DeflateConfig::default());
+        let mut ext = DeflateExtension::new(DeflateConfig::default(), true);
 
         let params = vec![
             ExtensionParam::flag("server_no_context_takeover"),
@@ -381,7 +522,7 @@ mod tests {
 
     #[test]
     fn test_control_frame_bypass() {
-        let mut ext = DeflateExtension::new(DeflateConfig::default());
+        let mut ext = DeflateExtension::new(DeflateConfig::default(), false);
         ext.negotiated = true;
 
         let ping_data = b"ping".to_vec();
@@ -415,7 +556,7 @@ mod tests {
         assert!(config.server_no_context_takeover);
         assert!(config.client_no_context_takeover);
 
-        let ext = DeflateExtension::new(config);
+        let ext = DeflateExtension::new(config, false);
         let params = ext.offer_params();
 
         assert!(params
@@ -428,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_empty_payload_handling() {
-        let mut ext = DeflateExtension::new(DeflateConfig::default());
+        let mut ext = DeflateExtension::new(DeflateConfig::default(), false);
         ext.negotiated = true;
 
         let mut frame = Frame::new(true, OpCode::Text, Vec::new());
@@ -460,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_rsv1_on_control_frame_error() {
-        let mut ext = DeflateExtension::new(DeflateConfig::default());
+        let mut ext = DeflateExtension::new(DeflateConfig::default(), false);
         ext.negotiated = true;
 
         let mut frame = Frame::ping(b"test".to_vec());
@@ -472,22 +613,24 @@ mod tests {
 
     #[test]
     fn test_binary_frame_compression() {
-        let mut ext = DeflateExtension::new(DeflateConfig::default());
-        ext.negotiated = true;
+        let mut client_ext = DeflateExtension::client(DeflateConfig::default());
+        let mut server_ext = DeflateExtension::server(DeflateConfig::default());
+        client_ext.negotiated = true;
+        server_ext.negotiated = true;
 
         let original_data: Vec<u8> = (0..256).map(|i| (i % 256) as u8).collect();
         let mut frame = Frame::binary(original_data.clone());
 
-        ext.encode(&mut frame).unwrap();
+        client_ext.encode(&mut frame).unwrap();
         assert!(frame.rsv1);
 
-        ext.decode(&mut frame).unwrap();
+        server_ext.decode(&mut frame).unwrap();
         assert_eq!(frame.payload(), &original_data[..]);
     }
 
     #[test]
     fn test_extension_name_and_rsv_bits() {
-        let ext = DeflateExtension::new(DeflateConfig::default());
+        let ext = DeflateExtension::new(DeflateConfig::default(), false);
         assert_eq!(ext.name(), "permessage-deflate");
         assert!(ext.rsv_bits().rsv1);
         assert!(!ext.rsv_bits().rsv2);
@@ -496,11 +639,141 @@ mod tests {
 
     #[test]
     fn test_unknown_parameter_rejected() {
-        let mut ext = DeflateExtension::new(DeflateConfig::default());
+        let mut ext = DeflateExtension::new(DeflateConfig::default(), true);
 
         let params = vec![ExtensionParam::flag("unknown_param")];
 
         let result = ext.negotiate(&params);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_window_bits_applied_to_encoder() {
+        let config = DeflateConfig::new().client_max_window_bits(9).unwrap();
+        let mut ext = DeflateExtension::client(config);
+        ext.negotiated = true;
+
+        // Trigger encoder creation
+        let _ = ext.ensure_encoder();
+        assert!(ext.encoder.is_some());
+
+        let mut frame = Frame::text(b"test data for compression".to_vec());
+        ext.encode(&mut frame).unwrap();
+        assert!(frame.rsv1);
+    }
+
+    #[test]
+    fn test_window_bits_applied_to_decoder() {
+        let config = DeflateConfig::new()
+            .server_max_window_bits(9)
+            .unwrap()
+            .client_max_window_bits(9)
+            .unwrap();
+
+        let mut server_ext = DeflateExtension::server(config.clone());
+        server_ext.negotiated = true;
+
+        let mut client_ext = DeflateExtension::client(config);
+        client_ext.negotiated = true;
+
+        let data = b"This is some data that will be compressed with 9-bit window".to_vec();
+        let mut frame = Frame::text(data.clone());
+
+        server_ext.encode(&mut frame).unwrap();
+        client_ext.decode(&mut frame).unwrap();
+
+        assert_eq!(frame.payload(), &data[..]);
+    }
+
+    #[test]
+    fn test_negotiated_window_bits_used() {
+        let mut ext = DeflateExtension::server(DeflateConfig::default());
+        let params = vec![
+            ExtensionParam::new("server_max_window_bits", "9"),
+            ExtensionParam::new("client_max_window_bits", "10"),
+        ];
+        ext.negotiate(&params).unwrap();
+
+        assert_eq!(ext.config.server_max_window_bits, 9);
+        assert_eq!(ext.config.client_max_window_bits, 10);
+
+        let _ = ext.ensure_encoder();
+        let _ = ext.ensure_decoder();
+
+        assert!(ext.encoder.is_some());
+        assert!(ext.decoder.is_some());
+    }
+
+    #[test]
+    fn test_context_takeover_improves_compression() {
+        // With context takeover enabled (default), the second identical message
+        // should compress smaller because the LZ77 dictionary is preserved
+        let mut client_ext = DeflateExtension::client(DeflateConfig::default());
+        let mut server_ext = DeflateExtension::server(DeflateConfig::default());
+        client_ext.negotiated = true;
+        server_ext.negotiated = true;
+
+        // Use a message with repeated patterns that benefits from dictionary reuse
+        let message = b"The quick brown fox jumps over the lazy dog. ".repeat(10);
+
+        // Encode first message
+        let mut frame1 = Frame::text(message.clone());
+        client_ext.encode(&mut frame1).unwrap();
+        let first_size = frame1.payload().len();
+
+        // Decoder must see the first message to sync its dictionary
+        server_ext.decode(&mut frame1).unwrap();
+
+        // Encode second identical message - should use preserved dictionary
+        let mut frame2 = Frame::text(message.clone());
+        client_ext.encode(&mut frame2).unwrap();
+        let second_size = frame2.payload().len();
+
+        // With context takeover, second message should compress at least as well
+        // (usually smaller due to dictionary containing previous message's patterns)
+        assert!(
+            second_size <= first_size,
+            "Context takeover should improve or maintain compression: second={} first={}",
+            second_size,
+            first_size
+        );
+
+        // Verify roundtrip works for second message
+        server_ext.decode(&mut frame2).unwrap();
+        assert_eq!(frame2.payload(), &message[..]);
+    }
+
+    #[test]
+    fn test_no_context_takeover_resets_state() {
+        // With no_context_takeover, each message starts fresh - no dictionary reuse
+        let config = DeflateConfig::new().client_no_context_takeover(true);
+        let mut client_ext = DeflateExtension::client(config.clone());
+        let mut server_ext = DeflateExtension::server(config);
+        client_ext.negotiated = true;
+        server_ext.negotiated = true;
+
+        let message = b"The quick brown fox jumps over the lazy dog. ".repeat(10);
+
+        // Encode first message
+        let mut frame1 = Frame::text(message.clone());
+        client_ext.encode(&mut frame1).unwrap();
+        let first_size = frame1.payload().len();
+        server_ext.decode(&mut frame1).unwrap();
+
+        // Encode second identical message - state should be reset
+        let mut frame2 = Frame::text(message.clone());
+        client_ext.encode(&mut frame2).unwrap();
+        let second_size = frame2.payload().len();
+
+        // With no context takeover, sizes should be the same
+        assert_eq!(
+            first_size, second_size,
+            "No context takeover should produce same size: first={} second={}",
+            first_size, second_size
+        );
+
+        // Verify roundtrip still works
+        server_ext.decode(&mut frame2).unwrap();
+        assert_eq!(frame2.payload(), &message[..]);
     }
 }

@@ -1,7 +1,9 @@
 //! Test harness utilities for concurrency and stress testing.
 
-pub mod server;
 pub mod client;
 pub mod metrics;
+pub mod server;
 
-// Re-exports will be added as modules are implemented
+pub use client::TestClient;
+pub use metrics::{Latencies, Metrics};
+pub use server::TestServer;

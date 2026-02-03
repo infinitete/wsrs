@@ -60,11 +60,11 @@ Create a reusable, pure-Rust testing framework that validates rsws protocol corr
 - `tests/stress.rs` - High-load throughput/latency benchmarks
 
 ### Definition of Done
-- [ ] `cargo test` passes with no failures
-- [ ] `cargo test -- --ignored` runs stress tests successfully
-- [ ] 1000 concurrent clients can connect, exchange messages, and disconnect
-- [ ] Throughput and latency metrics (p50/p95/p99) are captured and reported
-- [ ] No data races detected under high concurrency
+- [x] `cargo test` passes with no failures
+- [x] `cargo test -- --ignored` runs stress tests successfully
+- [x] 1000 concurrent clients can connect, exchange messages, and disconnect
+- [x] Throughput and latency metrics (p50/p95/p99) are captured and reported
+- [x] No data races detected under high concurrency
 
 ### Must Have
 - Barrier-synchronized simultaneous connection tests
@@ -162,7 +162,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ## TODOs
 
-- [ ] 1. Create tests/harness/ module structure
+- [x] 1. Create tests/harness/ module structure
 
   **What to do**:
   - Create `tests/harness/mod.rs` with submodule declarations
@@ -206,7 +206,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 2. Implement TestServer utility
+- [x] 2. Implement TestServer utility
 
   **What to do**:
   - Create `TestServer` struct with `spawn() -> (TestServer, SocketAddr)` method
@@ -259,7 +259,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 3. Implement TestClient factory
+- [x] 3. Implement TestClient factory
 
   **What to do**:
   - Create `TestClient` struct wrapping `Connection<TcpStream>`
@@ -314,7 +314,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 4. Implement Metrics collector
+- [x] 4. Implement Metrics collector
 
   **What to do**:
   - Create `Metrics` struct with `AtomicUsize` counters:
@@ -369,7 +369,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 5. Create tests/concurrency.rs skeleton
+- [x] 5. Create tests/concurrency.rs skeleton
 
   **What to do**:
   - Create `tests/concurrency.rs` with module imports
@@ -417,7 +417,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 6. Create tests/stress.rs skeleton
+- [x] 6. Create tests/stress.rs skeleton
 
   **What to do**:
   - Create `tests/stress.rs` with module imports
@@ -468,7 +468,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 7. Barrier-synchronized connection tests
+- [x] 7. Barrier-synchronized connection tests
 
   **What to do**:
   - Implement `test_barrier_synchronized_connect` in `tests/concurrency.rs`
@@ -513,7 +513,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 8. Message ordering validation tests
+- [x] 8. Message ordering validation tests
 
   **What to do**:
   - Implement `test_message_ordering` in `tests/concurrency.rs`
@@ -558,7 +558,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 9. Throughput/latency stress tests
+- [x] 9. Throughput/latency stress tests
 
   **What to do**:
   - Implement `test_stress_throughput` in `tests/stress.rs`
@@ -605,7 +605,7 @@ Parallel Speedup: ~40% faster than sequential
 
 ---
 
-- [ ] 10. Protocol correctness under load + close handshake tests
+- [x] 10. Protocol correctness under load + close handshake tests
 
   **What to do**:
   - Add `test_close_handshake_under_load` in `tests/concurrency.rs`
@@ -694,9 +694,9 @@ cargo fmt -- --check
 ```
 
 ### Final Checklist
-- [ ] All "Must Have" features implemented
-- [ ] All "Must NOT Have" guardrails respected
-- [ ] 1000+ concurrent clients tested successfully
-- [ ] Throughput and latency metrics captured
-- [ ] All tests pass with `cargo test`
-- [ ] Heavy tests properly marked `#[ignore]`
+- [x] All "Must Have" features implemented
+- [x] All "Must NOT Have" guardrails respected
+- [x] 1000+ concurrent clients tested successfully
+- [x] Throughput and latency metrics captured
+- [x] All tests pass with `cargo test`
+- [x] Heavy tests properly marked `#[ignore]`

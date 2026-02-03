@@ -4,6 +4,7 @@ use crate::codec::WebSocketCodec;
 use crate::config::Config;
 use crate::connection::{ConnectionState, Role};
 use crate::error::{Error, Result};
+use crate::extensions::ExtensionRegistry;
 use crate::message::{CloseCode, CloseFrame, Message};
 use crate::protocol::assembler::{AssembledMessage, MessageAssembler};
 use crate::protocol::{Frame, OpCode};
@@ -40,6 +41,7 @@ pub struct Connection<T> {
     state: ConnectionState,
     assembler: MessageAssembler,
     pending_pong: Option<Vec<u8>>,
+    extensions: ExtensionRegistry,
 }
 
 impl<T> Connection<T> {
@@ -54,12 +56,28 @@ impl<T> Connection<T> {
     /// - `role`: The connection role (Client or Server)
     /// - `config`: Connection configuration
     pub fn new(io: T, role: Role, config: Config) -> Self {
+        Self::with_extensions(io, role, config, ExtensionRegistry::new())
+    }
+
+    /// Create a new WebSocket connection with pre-configured extensions.
+    ///
+    /// Use this when you have already negotiated extensions during the handshake
+    /// and want to apply them to the connection.
+    ///
+    /// ## Arguments
+    ///
+    /// - `io`: The underlying async I/O stream
+    /// - `role`: The connection role (Client or Server)
+    /// - `config`: Connection configuration
+    /// - `extensions`: Pre-configured extension registry
+    pub fn with_extensions(io: T, role: Role, config: Config, extensions: ExtensionRegistry) -> Self {
         let assembler = MessageAssembler::new(config.clone());
         Self {
             codec: WebSocketCodec::new(io, role, config),
             state: ConnectionState::Open,
             assembler,
             pending_pong: None,
+            extensions,
         }
     }
 
@@ -73,6 +91,11 @@ impl<T> Connection<T> {
     /// Returns `true` if messages can be sent and received.
     pub fn is_open(&self) -> bool {
         self.state == ConnectionState::Open
+    }
+
+    /// Get mutable access to the extension registry.
+    pub fn extensions_mut(&mut self) -> &mut ExtensionRegistry {
+        &mut self.extensions
     }
 }
 
@@ -91,7 +114,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
             return Err(Error::ConnectionClosed(None));
         }
 
-        let frame = match message {
+        let mut frame = match message {
             Message::Text(text) => Frame::text(text.into_bytes()),
             Message::Binary(data) => Frame::binary(data),
             Message::Ping(data) => Frame::ping(data),
@@ -104,6 +127,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                 }
             }
         };
+
+        if frame.opcode.is_data() {
+            self.extensions.encode(&mut frame)?;
+        }
 
         self.codec.write_frame(&frame).await?;
         self.codec.flush().await?;
@@ -116,7 +143,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
             return Err(Error::ConnectionClosed(None));
         }
 
-        let frame = match message {
+        let mut frame = match message {
             Message::Text(text) => Frame::text(text.into_bytes()),
             Message::Binary(data) => Frame::binary(data),
             Message::Ping(data) => Frame::ping(data),
@@ -129,6 +156,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                 }
             }
         };
+
+        if frame.opcode.is_data() {
+            self.extensions.encode(&mut frame)?;
+        }
 
         self.codec.write_frame(&frame).await?;
         Ok(())
@@ -210,6 +241,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                     return Ok(Some(Message::Close(close_frame)));
                 }
                 OpCode::Text | OpCode::Binary | OpCode::Continuation => {
+                    let mut frame = frame;
+                    self.extensions.decode(&mut frame)?;
                     if let Some(assembled) = self.assembler.push(frame)? {
                         return Ok(Some(self.assembled_to_message(assembled)?));
                     }

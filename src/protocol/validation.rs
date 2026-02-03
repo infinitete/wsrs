@@ -20,6 +20,8 @@ pub struct FrameValidator {
     limits: Limits,
     /// Whether to accept unmasked frames (server-side, non-compliant).
     accept_unmasked_frames: bool,
+    /// Allowed RSV bits (bitmask: RSV1=0x40, RSV2=0x20, RSV3=0x10).
+    allowed_rsv_bits: u8,
 }
 
 impl FrameValidator {
@@ -34,6 +36,7 @@ impl FrameValidator {
             role,
             limits,
             accept_unmasked_frames: false,
+            allowed_rsv_bits: 0,
         }
     }
 
@@ -43,6 +46,22 @@ impl FrameValidator {
     pub fn with_accept_unmasked(mut self, accept: bool) -> Self {
         self.accept_unmasked_frames = accept;
         self
+    }
+
+    /// Set which RSV bits are allowed.
+    ///
+    /// Bitmask values:
+    /// - RSV1: 0x40
+    /// - RSV2: 0x20
+    /// - RSV3: 0x10
+    pub fn with_allowed_rsv_bits(mut self, bits: u8) -> Self {
+        self.allowed_rsv_bits = bits;
+        self
+    }
+
+    /// Update allowed RSV bits at runtime.
+    pub fn set_allowed_rsv_bits(&mut self, bits: u8) {
+        self.allowed_rsv_bits = bits;
     }
 
     /// Validate an incoming frame.
@@ -108,7 +127,11 @@ impl FrameValidator {
     /// RSV bits MUST be 0 unless an extension is negotiated that defines
     /// meanings for non-zero values.
     fn validate_rsv_bits(&self, rsv1: bool, rsv2: bool, rsv3: bool) -> Result<()> {
-        if rsv1 || rsv2 || rsv3 {
+        let rsv_byte = (if rsv1 { 0x40 } else { 0 })
+            | (if rsv2 { 0x20 } else { 0 })
+            | (if rsv3 { 0x10 } else { 0 });
+
+        if (rsv_byte & !self.allowed_rsv_bits) != 0 {
             return Err(Error::ReservedBitsSet);
         }
         Ok(())
@@ -255,6 +278,45 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rsv1_allowed_when_mask_set() {
+        let validator =
+            FrameValidator::new(Role::Server, Limits::default()).with_allowed_rsv_bits(0x40); // RSV1 allowed
+
+        let result = validator.validate_incoming(
+            true, true, // RSV1 set
+            false, false, 10,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rsv2_allowed_when_mask_set() {
+        let validator =
+            FrameValidator::new(Role::Server, Limits::default()).with_allowed_rsv_bits(0x20); // RSV2 allowed
+
+        let result = validator.validate_incoming(
+            true, false, true, // RSV2 set
+            false, 10,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rsv_rejected_when_not_in_mask() {
+        let validator =
+            FrameValidator::new(Role::Server, Limits::default()).with_allowed_rsv_bits(0x40); // Only RSV1 allowed
+
+        let result = validator.validate_incoming(
+            true, false, true, // RSV2 set (should fail)
+            false, 10,
+        );
+
+        assert!(matches!(result, Err(Error::ReservedBitsSet)));
     }
 
     // --------------------------------------------------------------------------

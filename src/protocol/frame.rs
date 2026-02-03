@@ -5,8 +5,8 @@
 use bytes::Bytes;
 
 use crate::error::{Error, Result};
-use crate::protocol::mask::{apply_mask, apply_mask_simd};
 use crate::protocol::OpCode;
+use crate::protocol::mask::{apply_mask, apply_mask_simd};
 
 /// Maximum payload size for control frames (RFC 6455).
 pub const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
