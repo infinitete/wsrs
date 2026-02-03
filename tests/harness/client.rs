@@ -18,6 +18,7 @@ pub struct TestClient {
 
 impl TestClient {
     /// Connect to a WebSocket server at the given address.
+    #[allow(dead_code)]
     pub async fn connect(addr: SocketAddr) -> Result<TestClient, Box<dyn Error + Send + Sync>> {
         Self::connect_internal(addr, None).await
     }

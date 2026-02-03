@@ -8,10 +8,10 @@ thiserror = "1.0"
 sha1 = "0.10"
 base64 = "0.22"
 getrandom = { version = "0.2", default-features = false, features = ["std"] }
+bytes = "1.5"
 
 # Async runtime (feature-gated)
 tokio = { version = "1.36", features = ["io-util", "net", "sync"], optional = true }
-bytes = { version = "1.5", optional = true }
 futures-core = { version = "0.3", optional = true }
 
 # Compression support (feature-gated)
@@ -46,7 +46,7 @@ path = "examples/stress_client.rs"
 
 [features]
 default = ["async-tokio"]
-async-tokio = ["tokio", "bytes", "futures-core"]
+async-tokio = ["tokio", "futures-core"]
 tls-rustls = ["async-tokio", "tokio-rustls", "rustls", "rustls-pemfile", "webpki-roots"]
 tls-native = ["async-tokio", "native-tls", "tokio-native-tls"]
 compression = ["flate2"]

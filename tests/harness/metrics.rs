@@ -114,6 +114,7 @@ impl Metrics {
     }
 
     /// Print a formatted summary of all metrics.
+    #[allow(dead_code)]
     pub fn report(&self) {
         println!("=== Metrics Report ===");
         println!(
@@ -219,6 +220,7 @@ impl Latencies {
     }
 
     /// Print a formatted summary of latency percentiles.
+    #[allow(dead_code)]
     pub fn report(&self) {
         println!("=== Latency Report ===");
         println!("Samples: {}", self.count());

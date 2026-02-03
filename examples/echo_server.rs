@@ -50,7 +50,7 @@ async fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error + 
     // Step 3: Generate and send handshake response
     let response = HandshakeResponse::from_request(&request);
     let mut response_bytes = Vec::new();
-    response.write(&mut response_bytes);
+    let _ = response.write(&mut response_bytes);
     stream.write_all(&response_bytes).await?;
     println!("  Handshake complete");
 
