@@ -1,81 +1,76 @@
-# rsws - Production-Grade WebSocket Library
+# rsws
 
 [![CI](https://github.com/infinitete/rust-ws/actions/workflows/ci.yml/badge.svg)](https://github.com/infinitete/rust-ws/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-English | [中文](README_CN.md)
-
-`rsws` is a high-performance, RFC 6455 compliant WebSocket protocol library for Rust. Designed for production use with zero-copy parsing, async-first architecture, and comprehensive security features.
+A production-grade, RFC 6455 compliant WebSocket library for Rust.
 
 ## Features
 
-- **Zero-copy frame parsing** - Minimizes memory allocations for optimal throughput
-- **Async-first design** - Runtime-agnostic core with Tokio support
-- **Full RFC 6455 compliance** - Strict validation and protocol correctness
-- **TLS/HTTPS support** - Secure WebSocket (wss://) via rustls or native-tls
-- **Per-message deflate compression** - Reduce bandwidth usage with negotiated extensions
-- **Production-ready limits** - Configurable frame/message size limits prevent resource exhaustion
-- **Comprehensive error handling** - Detailed error types for debugging
+- **RFC 6455 Compliant** — Full protocol implementation with strict validation
+- **Async/Await** — Built on Tokio for high-performance async I/O
+- **Zero-Copy Parsing** — Minimal allocations in hot paths
+- **SIMD Acceleration** — Runtime-detected AVX2/SSE2/NEON for >150 GiB/s masking throughput
+- **TLS Support** — Secure WebSocket (wss://) via rustls or native-tls
+- **Compression** — Per-message deflate (RFC 7692)
+- **Configurable Limits** — Protection against resource exhaustion attacks
 
 ## Installation
-
-Add `rsws` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 rsws = "0.1"
 ```
 
-## Quick Start
+### Feature Flags
 
-### Client Example
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `async-tokio` | Async I/O with Tokio runtime | Yes |
+| `tls-rustls` | TLS via rustls (pure Rust) | No |
+| `tls-native` | TLS via native-tls (platform) | No |
+| `compression` | Per-message deflate (RFC 7692) | No |
 
-```rust
-use rsws::{Connection, Config, Role};
+```toml
+# With TLS
+rsws = { version = "0.1", features = ["tls-rustls"] }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let stream = tokio::net::TcpStream::connect("echo.websocket.org:80").await?;
-    let config = Config::client();
-    let mut conn = Connection::new(stream, Role::Client, config);
+# With compression
+rsws = { version = "0.1", features = ["compression"] }
 
-    conn.send(rsws::Message::text("Hello, WebSocket!")).await?;
-    
-    if let Some(msg) = conn.recv().await? {
-        println!("Received: {:?}", msg);
-    }
-    
-    conn.close(rsws::CloseCode::Normal, "done").await?;
-    Ok(())
-}
+# Full featured
+rsws = { version = "0.1", features = ["tls-rustls", "compression"] }
 ```
 
-### Server Example
+## Quick Start
+
+### Echo Server
 
 ```rust
 use rsws::{Connection, Config, Role, Message};
+use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let listener = TcpListener::bind("127.0.0.1:8080").await?;
     
     loop {
         let (stream, _) = listener.accept().await?;
-        let config = Config::server();
         
         tokio::spawn(async move {
-            let mut conn = Connection::new(stream, Role::Server, config);
+            // Note: Handshake must be performed before wrapping
+            let mut conn = Connection::new(stream, Role::Server, Config::server());
             
-            while let Some(msg) = conn.recv().await.unwrap() {
-                // Echo back the message
+            while let Ok(Some(msg)) = conn.recv().await {
                 match msg {
                     Message::Text(text) => {
-                        conn.send(Message::text(text)).await.unwrap();
+                        conn.send(Message::text(text)).await.ok();
                     }
                     Message::Binary(data) => {
-                        conn.send(Message::binary(data)).await.unwrap();
+                        conn.send(Message::binary(data)).await.ok();
                     }
-                    _ => { /* handle control frames */ }
+                    Message::Close(_) => break,
+                    _ => {}
                 }
             }
         });
@@ -83,200 +78,251 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### TLS Server Example
+### Client
 
 ```rust
-use rsws::{tls::TlsAcceptor, Connection, Config, Role};
-use std::sync::Arc;
+use rsws::{Connection, Config, Role, Message, CloseCode};
+use rsws::protocol::handshake::{HandshakeRequest, HandshakeResponse, compute_accept_key};
+use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let certs = rsws::tls::load_certs_from_file("cert.pem")?;
-    let key = rsws::tls::load_private_key_from_file("key.pem")?;
-    let tls_config = rsws::tls::server_config(certs, key)?;
-    let tls_acceptor = TlsAcceptor::new(Arc::new(tls_config));
+    let mut stream = TcpStream::connect("127.0.0.1:8080").await?;
     
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8443").await?;
+    // Perform HTTP upgrade handshake
+    let key = rsws::protocol::handshake::generate_key();
+    let request = HandshakeRequest::new("127.0.0.1:8080", "/", &key);
+    stream.write_all(request.to_string().as_bytes()).await?;
     
-    loop {
-        let stream = listener.accept().await?;
-        let tls_stream = tls_acceptor.accept(stream).await?;
-        let config = Config::server();
-        let mut conn = Connection::new(tls_stream, Role::Server, config);
-        
-        // Handle connection...
+    let mut buf = [0u8; 1024];
+    let n = stream.read(&mut buf).await?;
+    let response = HandshakeResponse::parse(&buf[..n])?;
+    assert_eq!(response.accept, compute_accept_key(&key));
+    
+    // Create WebSocket connection
+    let mut conn = Connection::new(stream, Role::Client, Config::client());
+    
+    conn.send(Message::text("Hello, WebSocket!")).await?;
+    
+    if let Ok(Some(msg)) = conn.recv().await {
+        println!("Received: {:?}", msg);
     }
+    
+    conn.close(CloseCode::Normal, "done").await?;
+    Ok(())
 }
 ```
 
-## Feature Flags
-
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `async-tokio` | Enable async I/O with Tokio | Yes |
-| `tls-rustls` | Enable TLS via rustls (pure Rust) | No |
-| `tls-native` | Enable TLS via native-tls (platform-native) | No |
-| `compression` | Enable per-message deflate compression | No |
-
-### Recommended Configurations
-
-```toml
-# Minimal (no TLS, no compression)
-[dependencies]
-rsws = "0.1"
-
-# With TLS via rustls
-[dependencies]
-rsws = { version = "0.1", features = ["tls-rustls"] }
-
-# With compression
-[dependencies]
-rsws = { version = "0.1", features = ["compression"] }
-
-# Full featured
-[dependencies]
-rsws = { version = "0.1", features = ["tls-rustls", "compression"] }
-```
-
-## Performance 🚀
-
-`rsws` has been re-engineered for extreme performance, achieving over **150 GiB/s** throughput using SIMD acceleration.
-
-### Benchmark Results
-
-| Payload Size | Scalar (Baseline) | SIMD (AVX2/NEON) | Improvement |
-|--------------|-------------------|------------------|-------------|
-| **64 KB**    | ~10.0 GiB/s       | **154.9 GiB/s**  | **~15x** 🚀 |
-| **1 MB**     | 7.07 GiB/s        | **101.2 GiB/s**  | **~14x** 🚀 |
-
-### Key Optimizations
-
-- **SIMD Acceleration**: Runtime-detected AVX2/SSE2/NEON implementation for massive parallel processing of masking operations.
-- **Zero-Copy Architecture**: 
-  - `Bytes`-based parsing for unmasked frames (0 allocations).
-  - Single-buffer message reassembly (eliminating N+1 allocations).
-- **Efficient I/O**: `send_batch()` reduces syscall overhead, and direct buffer I/O eliminates intermediate copies.
-- **Configurable Buffers**: Tune `read_buffer_size` and `write_buffer_size` for your workload.
-
-To reproduce these results on your hardware:
-
-```bash
-cargo bench --bench benchmarks
-```
-
-## API Overview
+## API Reference
 
 ### Core Types
 
-- **`Connection<T>`** - Main WebSocket connection type, wrapping an async I/O stream
-- **`Config`** - Connection configuration including limits and fragment sizes
-- **`Limits`** - Resource limits for frame size, message size, and fragment count
-- **`Message`** - Enum representing WebSocket messages (Text, Binary, Ping, Pong, Close)
-- **`Frame`** - Low-level frame type for direct protocol manipulation
+| Type | Description |
+|------|-------------|
+| `Connection<T>` | WebSocket connection over async stream `T` |
+| `Config` | Connection configuration (limits, buffering, masking) |
+| `Limits` | Resource limits (frame size, message size, fragments) |
+| `Message` | WebSocket message (Text, Binary, Ping, Pong, Close) |
+| `CloseCode` | RFC 6455 close status codes |
+| `CloseFrame` | Close frame with code and reason |
+| `Role` | Connection role (Client or Server) |
+| `ConnectionState` | State machine (Open, Closing, Closed) |
 
-### Handshake Functions
+### Connection Methods
 
-- **`compute_accept_key`** - Compute the Sec-WebSocket-Accept header value
-- **`HandshakeRequest`** / **`HandshakeResponse`** - Types for HTTP upgrade handshake
+```rust
+// Send a message (auto-flushes)
+conn.send(Message::text("hello")).await?;
+
+// Send without flushing (for batching)
+conn.send_no_flush(Message::text("one")).await?;
+conn.send_no_flush(Message::text("two")).await?;
+conn.flush().await?;
+
+// Batch send (single flush at end)
+conn.send_batch([Message::text("a"), Message::text("b")]).await?;
+
+// Receive next message
+while let Some(msg) = conn.recv().await? {
+    // Handle message
+}
+
+// Initiate close handshake
+conn.close(CloseCode::Normal, "goodbye").await?;
+
+// Check connection state
+if conn.is_open() { /* ... */ }
+```
 
 ### Message Builders
 
 ```rust
-// Create messages
 let text = Message::text("Hello");
 let binary = Message::binary(vec![0x01, 0x02, 0x03]);
 let ping = Message::ping(vec![]);
 let pong = Message::pong(data);
 let close = Message::close(CloseCode::Normal, "goodbye");
 
-// Check message type
-if msg.is_text() { /* ... */ }
-if msg.is_binary() { /* ... */ }
-if msg.is_data() { /* ... */ }
-if msg.is_control() { /* ... */ }
+// Type checks
+msg.is_text();
+msg.is_binary();
+msg.is_data();      // text or binary
+msg.is_control();   // ping, pong, or close
 
 // Extract data
-if let Some(text) = msg.into_text() { /* ... */ }
-if let Some(data) = msg.into_binary() { /* ... */ }
+msg.as_text();      // Option<&str>
+msg.as_binary();    // Option<&[u8]>
+msg.into_text();    // Option<String>
+msg.into_binary();  // Option<Vec<u8>>
 ```
 
 ### Configuration
 
 ```rust
-// Default configuration
-let config = Config::default();
+// Role-based presets
+let server_config = Config::server();  // No masking, validates client frames
+let client_config = Config::client();  // Masks all outgoing frames
 
-// Server role (no masking, validate client frames)
-let server_config = Config::server();
-
-// Client role (mask all frames)
-let client_config = Config::client();
-
-// Custom limits
+// Custom configuration
 let config = Config::new()
-    .with_limits(Limits::embedded())  // For resource-constrained environments
-    .with_limits(Limits::unrestricted())  // For trusted environments
-    .with_fragment_size(4096);  // Fragment large messages
+    .with_limits(Limits::default())
+    .with_fragment_size(16 * 1024)
+    .with_read_buffer_size(8192)
+    .with_write_buffer_size(8192)
+    .with_timeouts(Timeouts::default())
+    .with_allowed_origins(vec!["https://example.com".into()]);
 ```
 
-## Error Handling
+### Limits Presets
+
+| Preset | Frame | Message | Fragments | Use Case |
+|--------|-------|---------|-----------|----------|
+| `Limits::default()` | 16 MB | 64 MB | 128 | General purpose |
+| `Limits::embedded()` | 64 KB | 256 KB | 16 | Resource-constrained |
+| `Limits::unrestricted()` | 1 GB | 4 GB | 1024 | Trusted environments |
+
+### Error Handling
 
 ```rust
 use rsws::{Error, Result};
 
-match connection.send(Message::text("hello")).await {
-    Ok(()) => println!("Sent successfully"),
-    Err(Error::ConnectionClosed(None)) => println!("Connection already closed"),
+match conn.recv().await {
+    Ok(Some(msg)) => { /* handle message */ }
+    Ok(None) => { /* connection closed */ }
+    Err(Error::ConnectionClosed(_)) => { /* peer closed */ }
     Err(Error::FrameTooLarge { size, max }) => {
-        println!("Frame too large: {} > {}", size, max)
+        eprintln!("Frame {} exceeds limit {}", size, max);
     }
-    Err(e) => println!("Error: {:?}", e),
+    Err(Error::InvalidUtf8) => { /* invalid text frame */ }
+    Err(Error::ProtocolViolation(reason)) => { /* RFC violation */ }
+    Err(e) => { /* other error */ }
 }
+```
+
+## TLS Support
+
+### Server with rustls
+
+```rust
+use rsws::{Connection, Config, Role};
+use rsws::tls::{TlsAcceptor, load_certs_from_file, load_private_key_from_file, server_config};
+use std::sync::Arc;
+
+let certs = load_certs_from_file("cert.pem")?;
+let key = load_private_key_from_file("key.pem")?;
+let tls_config = server_config(certs, key)?;
+let acceptor = TlsAcceptor::new(Arc::new(tls_config));
+
+let (tcp_stream, _) = listener.accept().await?;
+let tls_stream = acceptor.accept(tcp_stream).await?;
+let conn = Connection::new(tls_stream, Role::Server, Config::server());
+```
+
+### Client with rustls
+
+```rust
+use rsws::tls::{TlsConnector, client_config_with_native_roots};
+
+let tls_config = client_config_with_native_roots()?;
+let connector = TlsConnector::new(tls_config);
+let tls_stream = connector.connect("example.com", tcp_stream).await?;
+let conn = Connection::new(tls_stream, Role::Client, Config::client());
+```
+
+## Performance
+
+rsws achieves **>150 GiB/s** masking throughput via SIMD acceleration:
+
+| Payload | Scalar | SIMD (AVX2/NEON) | Speedup |
+|---------|--------|------------------|---------|
+| 64 KB | ~10 GiB/s | 154.9 GiB/s | ~15x |
+| 1 MB | 7.07 GiB/s | 101.2 GiB/s | ~14x |
+
+**Optimizations:**
+- Runtime CPU feature detection (AVX2/SSE2/NEON)
+- Zero-copy `Bytes`-based parsing for unmasked frames
+- Single-buffer message reassembly
+- Batch sending with `send_batch()` to reduce syscalls
+- Configurable read/write buffer sizes
+
+Run benchmarks:
+```bash
+cargo bench --bench benchmarks
 ```
 
 ## RFC 6455 Compliance
 
-`rsws` provides **full compliance** with [RFC 6455 - The WebSocket Protocol](https://tools.ietf.org/html/rfc6455).
-
-### Compliance Summary
-
 | Section | Feature | Status |
 |---------|---------|--------|
-| §4 | Opening Handshake | ✅ Full |
-| §5.2 | Frame Format (FIN, RSV, Opcode, Mask, Payload) | ✅ Full |
-| §5.3 | Client-to-Server Masking | ✅ Full |
-| §5.4 | Fragmentation | ✅ Full |
-| §5.5 | Control Frames (Close, Ping, Pong) | ✅ Full |
-| §6 | UTF-8 Validation | ✅ Full |
-| §7 | Closing Handshake | ✅ Full |
-| §7.4 | Status Codes (1000-4999) | ✅ Full |
-| §9 | Extensions | ✅ Full |
-| §10 | Security (Origin, CSWSH) | ✅ Full |
-
-### Implemented Features
-
-- **Frame Parsing & Serialization**: All opcodes (0x0-0xA), 7/16/64-bit payload lengths
-- **Masking**: SIMD-accelerated XOR (AVX2/SSE2/NEON), >150 GiB/s throughput
-- **Fragmentation**: Message assembly with configurable limits
-- **Control Frames**: Payload ≤125 bytes, no fragmentation enforced
-- **Close Codes**: All standard codes (1000-1015) plus application codes (3000-4999)
-- **UTF-8 Validation**: Incremental validation across fragments
-- **Security Hardening**:
-  - Origin validation (CSWSH protection)
-  - CRLF injection prevention
-  - Configurable size limits (DoS protection)
-  - Duplicate header rejection
+| §4 | Opening Handshake | ✅ |
+| §5.2 | Frame Format | ✅ |
+| §5.3 | Client-to-Server Masking | ✅ |
+| §5.4 | Fragmentation | ✅ |
+| §5.5 | Control Frames | ✅ |
+| §6 | UTF-8 Validation | ✅ |
+| §7 | Closing Handshake | ✅ |
+| §7.4 | Status Codes | ✅ |
+| §9 | Extensions | ✅ |
+| §10 | Security | ✅ |
 
 ### Extensions
 
 | Extension | RFC | Status |
 |-----------|-----|--------|
-| permessage-deflate | [RFC 7692](https://tools.ietf.org/html/rfc7692) | ✅ Implemented (feature-gated) |
+| permessage-deflate | RFC 7692 | ✅ (feature-gated) |
+
+### Security Features
+
+- CSWSH protection via origin validation
+- CRLF injection prevention in headers
+- Configurable size limits (DoS protection)
+- Proper masking enforcement per role
 
 ### Autobahn Test Suite
 
-This library includes [Autobahn WebSocket Testsuite](https://github.com/crossbario/autobahn-testsuite) integration for compliance verification. See [autobahn/README.md](autobahn/README.md) for details.
+See [autobahn/README.md](autobahn/README.md) for compliance verification.
+
+## Examples
+
+```bash
+# Echo server
+cargo run --example echo_server
+
+# Client
+cargo run --example client
+
+# WSS client (TLS)
+cargo run --example wss_client --features tls-rustls
+
+# Stress testing
+cargo run --example stress_server
+cargo run --example stress_client
+
+# Autobahn compliance
+cargo run --example autobahn_server
+```
 
 ## License
 
-[MIT License](LICENSE)
+MIT
