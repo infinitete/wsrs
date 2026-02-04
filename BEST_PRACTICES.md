@@ -171,9 +171,23 @@ let config = Config::server()
 let config = Config::server()
     .with_limits(Limits::embedded());  // 64 KB frame, 256 KB message
 
-// Internal microservices (trusted network)
-let config = Config::server()
-    .with_limits(Limits::unrestricted());  // 1 GB frame, 4 GB message
+// ⚠️ DEPRECATED: Limits::unrestricted() is deprecated since v0.2.0
+// Use custom Limits::new() if you need larger limits
+```
+
+### Compression Security (v0.2.2+)
+
+When using the `compression` feature, rsws protects against decompression bomb attacks:
+
+- **Max decompression ratio**: 100:1 (configurable)
+- **Max decompressed size**: 64 MB (configurable via `DeflateConfig`)
+
+```rust
+use rsws::extensions::DeflateConfig;
+
+// Custom decompression limits
+let deflate_config = DeflateConfig::default();
+// deflate_config.max_decompressed_size = 32 * 1024 * 1024;  // 32 MB
 ```
 
 ### Frame Masking
@@ -213,7 +227,9 @@ let config = Config::client();
 |--------|-------|---------|-----------|----------|
 | `default()` | 16 MB | 64 MB | 128 | General web apps |
 | `embedded()` | 64 KB | 256 KB | 16 | IoT, constrained memory |
-| `unrestricted()` | 1 GB | 4 GB | 1024 | Trusted internal services |
+| ~~`unrestricted()`~~ | 1 GB | 4 GB | 1024 | ⚠️ **Deprecated** since v0.2.0 |
+
+> **Security Note**: `Limits::unrestricted()` is deprecated due to memory exhaustion attack risks. Use `Limits::default()` or create custom limits with `Limits::new()`.
 
 ### Timeout Configuration
 
