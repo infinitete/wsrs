@@ -171,9 +171,23 @@ let config = Config::server()
 let config = Config::server()
     .with_limits(Limits::embedded());  // 64 KB 帧, 256 KB 消息
 
-// 内部微服务（受信网络）
-let config = Config::server()
-    .with_limits(Limits::unrestricted());  // 1 GB 帧, 4 GB 消息
+// ⚠️ 已废弃: Limits::unrestricted() 自 v0.2.0 起已废弃
+// 如需更大限制，请使用 Limits::new() 自定义
+```
+
+### 压缩安全性 (v0.2.2+)
+
+使用 `compression` 功能时，rsws 可防止解压缩炸弹攻击：
+
+- **最大解压比率**: 100:1（可配置）
+- **最大解压大小**: 64 MB（可通过 `DeflateConfig` 配置）
+
+```rust
+use rsws::extensions::DeflateConfig;
+
+// 自定义解压限制
+let deflate_config = DeflateConfig::default();
+// deflate_config.max_decompressed_size = 32 * 1024 * 1024;  // 32 MB
 ```
 
 ### 帧掩码
@@ -213,7 +227,9 @@ let config = Config::client();
 |------|--------|----------|--------|----------|
 | `default()` | 16 MB | 64 MB | 128 | 通用 Web 应用 |
 | `embedded()` | 64 KB | 256 KB | 16 | IoT、内存受限 |
-| `unrestricted()` | 1 GB | 4 GB | 1024 | 受信内部服务 |
+| ~~`unrestricted()`~~ | 1 GB | 4 GB | 1024 | ⚠️ **已废弃** 自 v0.2.0 |
+
+> **安全提示**: `Limits::unrestricted()` 因存在内存耗尽攻击风险已被废弃。请使用 `Limits::default()` 或通过 `Limits::new()` 创建自定义限制。
 
 ### 超时配置
 
