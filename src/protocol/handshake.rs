@@ -3,7 +3,7 @@
 //! This module handles the HTTP Upgrade mechanism for establishing WebSocket connections.
 
 use crate::error::{Error, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 
