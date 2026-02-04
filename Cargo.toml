@@ -1,6 +1,6 @@
 [package]
 name = "rsws"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "Production-grade, RFC 6455 compliant WebSocket library for Rust"
 license = "MIT"
