@@ -183,7 +183,10 @@ mod tests {
 
     #[test]
     fn test_tls_error_display() {
-        let io_err = TlsError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        let io_err = TlsError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
         assert!(io_err.to_string().contains("TLS I/O error"));
 
         let config_err = TlsError::Configuration("bad config".to_string());
@@ -235,7 +238,8 @@ mod tests {
     #[test]
     fn test_load_certs_no_certs_in_file() {
         let mut temp = NamedTempFile::new().unwrap();
-        temp.write_all(b"not a certificate\njust some text\n").unwrap();
+        temp.write_all(b"not a certificate\njust some text\n")
+            .unwrap();
         temp.flush().unwrap();
 
         let result = load_certs_from_file(temp.path());
@@ -261,7 +265,8 @@ mod tests {
     #[test]
     fn test_load_private_key_no_key_in_file() {
         let mut temp = NamedTempFile::new().unwrap();
-        temp.write_all(b"not a private key\njust some text\n").unwrap();
+        temp.write_all(b"not a private key\njust some text\n")
+            .unwrap();
         temp.flush().unwrap();
 
         let result = load_private_key_from_file(temp.path());

@@ -133,7 +133,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
 
         // Validate message size before processing
         let payload = message.payload();
-        self.codec.config().limits.check_message_size(payload.len())?;
+        self.codec
+            .config()
+            .limits
+            .check_message_size(payload.len())?;
 
         let opcode = if message.is_text() {
             OpCode::Text
@@ -182,7 +185,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
 
         // Validate message size before processing
         let payload = message.payload();
-        self.codec.config().limits.check_message_size(payload.len())?;
+        self.codec
+            .config()
+            .limits
+            .check_message_size(payload.len())?;
 
         let opcode = if message.is_text() {
             OpCode::Text

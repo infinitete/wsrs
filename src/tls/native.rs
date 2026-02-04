@@ -253,7 +253,8 @@ mod tests {
 
     #[test]
     fn test_load_identity_pkcs12_file_not_found() {
-        let result = load_identity_from_pkcs12(Path::new("/nonexistent/path/identity.p12"), "password");
+        let result =
+            load_identity_from_pkcs12(Path::new("/nonexistent/path/identity.p12"), "password");
         assert!(matches!(result, Err(NativeTlsError::Io(_))));
     }
 
@@ -302,20 +303,14 @@ mod tests {
     #[test]
     fn test_load_identity_pem_cert_not_found() {
         let key_temp = NamedTempFile::new().unwrap();
-        let result = load_identity_from_pem(
-            Path::new("/nonexistent/cert.pem"),
-            key_temp.path(),
-        );
+        let result = load_identity_from_pem(Path::new("/nonexistent/cert.pem"), key_temp.path());
         assert!(matches!(result, Err(NativeTlsError::Io(_))));
     }
 
     #[test]
     fn test_load_identity_pem_key_not_found() {
         let cert_temp = NamedTempFile::new().unwrap();
-        let result = load_identity_from_pem(
-            cert_temp.path(),
-            Path::new("/nonexistent/key.pem"),
-        );
+        let result = load_identity_from_pem(cert_temp.path(), Path::new("/nonexistent/key.pem"));
         assert!(matches!(result, Err(NativeTlsError::Io(_))));
     }
 

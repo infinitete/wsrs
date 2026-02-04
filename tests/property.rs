@@ -3,7 +3,7 @@
 //! These tests use proptest to fuzz the frame parsing logic and find edge cases.
 
 use proptest::prelude::*;
-use rsws::protocol::{apply_mask, Frame, HandshakeRequest, OpCode};
+use rsws::protocol::{Frame, HandshakeRequest, OpCode, apply_mask};
 
 /// Strategy for generating valid data frame opcodes.
 fn data_opcode_strategy() -> impl Strategy<Value = OpCode> {
