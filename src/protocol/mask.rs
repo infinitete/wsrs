@@ -204,43 +204,45 @@ mod sve {
         // processes those bytes with predicated load/XOR/store, then
         // increments the index by the SVE vector length. This naturally
         // handles any tail elements without a separate scalar loop.
-        asm!(
-            // Replicate the 4-byte mask across all 32-bit lanes of z1
-            "mov w3, {mask:w}",
-            "dup z1.s, w3",
+        unsafe {
+            asm!(
+                // Replicate the 4-byte mask across all 32-bit lanes of z1
+                "mov w3, {mask:w}",
+                "dup z1.s, w3",
 
-            // Initialize loop index to 0
-            "mov {idx}, #0",
+                // Initialize loop index to 0
+                "mov {idx}, #0",
 
-            // Main processing loop
-            "2:",
-            // Create predicate: p0[i] = true if idx + i < len
-            "whilelt p0.b, {idx}, {len}",
-            // Exit if no active lanes (all bytes processed)
-            "b.none 3f",
-            // Load bytes with predicate (inactive lanes get zero)
-            "ld1b z0.b, p0/z, [{ptr}, {idx}]",
-            // XOR data with mask
-            "eor z0.b, z0.b, z1.b",
-            // Store bytes with predicate (only active lanes written)
-            "st1b z0.b, p0, [{ptr}, {idx}]",
-            // Increment index by SVE vector length in bytes
-            "incb {idx}",
-            // Continue loop
-            "b 2b",
-            "3:",
+                // Main processing loop
+                "2:",
+                // Create predicate: p0[i] = true if idx + i < len
+                "whilelt p0.b, {idx}, {len}",
+                // Exit if no active lanes (all bytes processed)
+                "b.none 3f",
+                // Load bytes with predicate (inactive lanes get zero)
+                "ld1b z0.b, p0/z, [{ptr}, {idx}]",
+                // XOR data with mask
+                "eor z0.b, z0.b, z1.b",
+                // Store bytes with predicate (only active lanes written)
+                "st1b z0.b, p0, [{ptr}, {idx}]",
+                // Increment index by SVE vector length in bytes
+                "incb {idx}",
+                // Continue loop
+                "b 2b",
+                "3:",
 
-            ptr = in(reg) ptr,
-            len = in(reg) len,
-            mask = in(reg) mask_u32,
-            idx = out(reg) _,
-            // Clobbers: w3 is used as temporary, z0/z1/p0 are SVE registers
-            out("w3") _,
-            out("p0") _,
-            out("z0") _,
-            out("z1") _,
-            options(nostack)
-        );
+                ptr = in(reg) ptr,
+                len = in(reg) len,
+                mask = in(reg) mask_u32,
+                idx = out(reg) _,
+                // Clobbers: w3 is used as temporary, z0/z1/p0 are SVE registers
+                out("w3") _,
+                out("p0") _,
+                out("z0") _,
+                out("z1") _,
+                options(nostack)
+            );
+        }
     }
 }
 

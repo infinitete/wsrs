@@ -59,8 +59,8 @@ mod aarch64_simd {
         for i in 0..chunks {
             // SAFETY: chunks = len / 16, so i * 16 + 16 <= len
             // ptr.add(i * 16) points to valid memory for 16 bytes
-            let chunk = vld1q_u8(ptr.add(i * 16));
-            if !is_ascii_chunk(chunk) {
+            let chunk = unsafe { vld1q_u8(ptr.add(i * 16)) };
+            if unsafe { !is_ascii_chunk(chunk) } {
                 all_ascii = false;
                 break;
             }
@@ -70,7 +70,7 @@ mod aarch64_simd {
             let tail_start = chunks * 16;
             for i in tail_start..len {
                 // SAFETY: i < len, so data.get_unchecked(i) is valid
-                if *data.get_unchecked(i) >= 0x80 {
+                if unsafe { *data.get_unchecked(i) } >= 0x80 {
                     all_ascii = false;
                     break;
                 }
