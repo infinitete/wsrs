@@ -3,7 +3,7 @@
 //! These tests use proptest to fuzz the frame parsing logic and find edge cases.
 
 use proptest::prelude::*;
-use rsws::protocol::{Frame, OpCode, apply_mask};
+use rsws::protocol::{apply_mask, Frame, HandshakeRequest, OpCode};
 
 /// Strategy for generating valid data frame opcodes.
 fn data_opcode_strategy() -> impl Strategy<Value = OpCode> {
@@ -14,12 +14,10 @@ fn data_opcode_strategy() -> impl Strategy<Value = OpCode> {
     ]
 }
 
-/// Strategy for generating valid control frame opcodes.
 fn control_opcode_strategy() -> impl Strategy<Value = OpCode> {
     prop_oneof![Just(OpCode::Close), Just(OpCode::Ping), Just(OpCode::Pong),]
 }
 
-/// Strategy for generating any valid opcode.
 fn any_opcode_strategy() -> impl Strategy<Value = OpCode> {
     prop_oneof![
         Just(OpCode::Continuation),
@@ -312,5 +310,48 @@ mod targeted_tests {
 
         let (parsed, _) = Frame::parse(&buf).unwrap();
         assert_eq!(parsed.payload(), payload.as_slice());
+    }
+}
+
+proptest! {
+    #[test]
+    fn test_handshake_parse_no_panic(data in prop::collection::vec(any::<u8>(), 0..2000)) {
+        let _ = HandshakeRequest::parse(&data);
+    }
+
+    #[test]
+    fn test_handshake_truncated(truncate_at in 1usize..200) {
+        let valid_request = b"GET /chat HTTP/1.1\r\n\
+            Host: example.com\r\n\
+            Upgrade: websocket\r\n\
+            Connection: Upgrade\r\n\
+            Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+            Sec-WebSocket-Version: 13\r\n\r\n";
+
+        let truncated_len = truncate_at.min(valid_request.len());
+        let truncated = &valid_request[..truncated_len];
+
+        if truncated_len < valid_request.len() {
+            let _ = HandshakeRequest::parse(truncated);
+        }
+    }
+
+    #[test]
+    fn test_handshake_valid_variations(
+        path in "/[a-z]{1,20}",
+        host in "[a-z]{3,10}\\.[a-z]{2,4}"
+    ) {
+        let request = format!(
+            "GET {} HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n\r\n",
+            path, host
+        );
+
+        let result = HandshakeRequest::parse(request.as_bytes());
+        prop_assert!(result.is_ok(), "Valid request should parse: {:?}", result);
     }
 }

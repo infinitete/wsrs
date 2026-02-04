@@ -173,3 +173,105 @@ pub fn load_private_key_from_file(path: &Path) -> Result<PrivateKeyDer<'static>,
 
     Err(TlsError::NoPrivateKeyFound)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_tls_error_display() {
+        let io_err = TlsError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        assert!(io_err.to_string().contains("TLS I/O error"));
+
+        let config_err = TlsError::Configuration("bad config".to_string());
+        assert!(config_err.to_string().contains("TLS configuration error"));
+        assert!(config_err.to_string().contains("bad config"));
+
+        let no_certs = TlsError::NoCertificatesFound;
+        assert!(no_certs.to_string().contains("no certificates found"));
+
+        let no_key = TlsError::NoPrivateKeyFound;
+        assert!(no_key.to_string().contains("no private key found"));
+
+        let invalid_key = TlsError::InvalidPrivateKey;
+        assert!(invalid_key.to_string().contains("invalid private key"));
+
+        let invalid_dns = TlsError::InvalidDnsName("bad.name".to_string());
+        assert!(invalid_dns.to_string().contains("invalid DNS name"));
+        assert!(invalid_dns.to_string().contains("bad.name"));
+    }
+
+    #[test]
+    fn test_tls_error_source() {
+        let io_err = TlsError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "test"));
+        assert!(io_err.source().is_some());
+
+        let config_err = TlsError::Configuration("test".to_string());
+        assert!(config_err.source().is_none());
+
+        let no_certs = TlsError::NoCertificatesFound;
+        assert!(no_certs.source().is_none());
+    }
+
+    #[test]
+    fn test_load_certs_file_not_found() {
+        let result = load_certs_from_file(Path::new("/nonexistent/path/cert.pem"));
+        assert!(matches!(result, Err(TlsError::Io(_))));
+    }
+
+    #[test]
+    fn test_load_certs_empty_file() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"").unwrap();
+        temp.flush().unwrap();
+
+        let result = load_certs_from_file(temp.path());
+        assert!(matches!(result, Err(TlsError::NoCertificatesFound)));
+    }
+
+    #[test]
+    fn test_load_certs_no_certs_in_file() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"not a certificate\njust some text\n").unwrap();
+        temp.flush().unwrap();
+
+        let result = load_certs_from_file(temp.path());
+        assert!(matches!(result, Err(TlsError::NoCertificatesFound)));
+    }
+
+    #[test]
+    fn test_load_private_key_file_not_found() {
+        let result = load_private_key_from_file(Path::new("/nonexistent/path/key.pem"));
+        assert!(matches!(result, Err(TlsError::Io(_))));
+    }
+
+    #[test]
+    fn test_load_private_key_empty_file() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"").unwrap();
+        temp.flush().unwrap();
+
+        let result = load_private_key_from_file(temp.path());
+        assert!(matches!(result, Err(TlsError::NoPrivateKeyFound)));
+    }
+
+    #[test]
+    fn test_load_private_key_no_key_in_file() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"not a private key\njust some text\n").unwrap();
+        temp.flush().unwrap();
+
+        let result = load_private_key_from_file(temp.path());
+        assert!(matches!(result, Err(TlsError::NoPrivateKeyFound)));
+    }
+
+    #[test]
+    fn test_io_error_conversion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let tls_err: TlsError = io_err.into();
+        assert!(matches!(tls_err, TlsError::Io(_)));
+    }
+}

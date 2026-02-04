@@ -1013,6 +1013,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "sha1",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-native-tls",

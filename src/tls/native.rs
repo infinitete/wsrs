@@ -205,3 +205,131 @@ pub fn load_identity_from_pem(
     native_tls::Identity::from_pkcs8(&cert_pem, &key_pem)
         .map_err(|e| NativeTlsError::InvalidIdentity(e.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_native_tls_error_display() {
+        let io_err = NativeTlsError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
+        assert!(io_err.to_string().contains("TLS I/O error"));
+
+        let no_certs = NativeTlsError::NoCertificatesFound;
+        assert!(no_certs.to_string().contains("no certificates found"));
+
+        let no_key = NativeTlsError::NoPrivateKeyFound;
+        assert!(no_key.to_string().contains("no private key found"));
+
+        let invalid_id = NativeTlsError::InvalidIdentity("bad identity".to_string());
+        assert!(invalid_id.to_string().contains("invalid identity"));
+        assert!(invalid_id.to_string().contains("bad identity"));
+    }
+
+    #[test]
+    fn test_native_tls_error_source() {
+        let io_err = NativeTlsError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "test"));
+        assert!(io_err.source().is_some());
+
+        let no_certs = NativeTlsError::NoCertificatesFound;
+        assert!(no_certs.source().is_none());
+
+        let invalid_id = NativeTlsError::InvalidIdentity("test".to_string());
+        assert!(invalid_id.source().is_none());
+    }
+
+    #[test]
+    fn test_io_error_conversion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let tls_err: NativeTlsError = io_err.into();
+        assert!(matches!(tls_err, NativeTlsError::Io(_)));
+    }
+
+    #[test]
+    fn test_load_identity_pkcs12_file_not_found() {
+        let result = load_identity_from_pkcs12(Path::new("/nonexistent/path/identity.p12"), "password");
+        assert!(matches!(result, Err(NativeTlsError::Io(_))));
+    }
+
+    #[test]
+    fn test_load_identity_pkcs12_invalid_format() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"not a pkcs12 file").unwrap();
+        temp.flush().unwrap();
+
+        let result = load_identity_from_pkcs12(temp.path(), "password");
+        assert!(matches!(result, Err(NativeTlsError::InvalidIdentity(_))));
+    }
+
+    #[test]
+    fn test_load_certificate_pem_file_not_found() {
+        let result = load_certificate_from_pem(Path::new("/nonexistent/path/cert.pem"));
+        assert!(matches!(result, Err(NativeTlsError::Io(_))));
+    }
+
+    #[test]
+    fn test_load_certificate_pem_invalid_format() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"not a certificate").unwrap();
+        temp.flush().unwrap();
+
+        let result = load_certificate_from_pem(temp.path());
+        assert!(matches!(result, Err(NativeTlsError::Tls(_))));
+    }
+
+    #[test]
+    fn test_load_certificate_der_file_not_found() {
+        let result = load_certificate_from_der(Path::new("/nonexistent/path/cert.der"));
+        assert!(matches!(result, Err(NativeTlsError::Io(_))));
+    }
+
+    #[test]
+    fn test_load_certificate_der_invalid_format() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"not a der certificate").unwrap();
+        temp.flush().unwrap();
+
+        let result = load_certificate_from_der(temp.path());
+        assert!(matches!(result, Err(NativeTlsError::Tls(_))));
+    }
+
+    #[test]
+    fn test_load_identity_pem_cert_not_found() {
+        let key_temp = NamedTempFile::new().unwrap();
+        let result = load_identity_from_pem(
+            Path::new("/nonexistent/cert.pem"),
+            key_temp.path(),
+        );
+        assert!(matches!(result, Err(NativeTlsError::Io(_))));
+    }
+
+    #[test]
+    fn test_load_identity_pem_key_not_found() {
+        let cert_temp = NamedTempFile::new().unwrap();
+        let result = load_identity_from_pem(
+            cert_temp.path(),
+            Path::new("/nonexistent/key.pem"),
+        );
+        assert!(matches!(result, Err(NativeTlsError::Io(_))));
+    }
+
+    #[test]
+    fn test_load_identity_pem_invalid_format() {
+        let mut cert_temp = NamedTempFile::new().unwrap();
+        cert_temp.write_all(b"not a cert").unwrap();
+        cert_temp.flush().unwrap();
+
+        let mut key_temp = NamedTempFile::new().unwrap();
+        key_temp.write_all(b"not a key").unwrap();
+        key_temp.flush().unwrap();
+
+        let result = load_identity_from_pem(cert_temp.path(), key_temp.path());
+        assert!(matches!(result, Err(NativeTlsError::InvalidIdentity(_))));
+    }
+}

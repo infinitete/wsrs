@@ -5,11 +5,122 @@
 use bytes::Bytes;
 
 use crate::error::{Error, Result};
-use crate::protocol::OpCode;
 use crate::protocol::mask::{apply_mask, apply_mask_simd};
+use crate::protocol::OpCode;
 
 /// Maximum payload size for control frames (RFC 6455).
 pub const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
+
+#[derive(Debug, Clone)]
+struct FrameHeader {
+    fin: bool,
+    rsv1: bool,
+    rsv2: bool,
+    rsv3: bool,
+    opcode: OpCode,
+    mask: Option<[u8; 4]>,
+    payload_len: usize,
+    header_len: usize,
+}
+
+/// Parse frame header from buffer.
+///
+/// This is the common header parsing logic shared between `Frame::parse()`
+/// and `Frame::parse_zero_copy()`.
+///
+/// # Errors
+///
+/// - `Error::IncompleteFrame` if not enough data is available
+/// - `Error::InvalidOpcode` if the opcode is invalid
+/// - `Error::ReservedOpcode` if a reserved opcode is used
+/// - `Error::PayloadTooLargeForPlatform` if payload length exceeds platform limits
+#[inline]
+fn parse_header(buf: &[u8]) -> Result<FrameHeader> {
+    // Need at least 2 bytes for the header
+    if buf.len() < 2 {
+        return Err(Error::IncompleteFrame {
+            needed: 2 - buf.len(),
+        });
+    }
+
+    let byte0 = buf[0];
+    let byte1 = buf[1];
+
+    // Parse first byte
+    let fin = (byte0 & 0x80) != 0;
+    let rsv1 = (byte0 & 0x40) != 0;
+    let rsv2 = (byte0 & 0x20) != 0;
+    let rsv3 = (byte0 & 0x10) != 0;
+    let opcode = OpCode::from_u8(byte0 & 0x0F)?;
+
+    // Parse second byte
+    let masked = (byte1 & 0x80) != 0;
+    let payload_len_initial = byte1 & 0x7F;
+
+    // Calculate header size and payload length
+    let (payload_len, header_size) = match payload_len_initial {
+        0..=125 => (payload_len_initial as usize, 2),
+        126 => {
+            if buf.len() < 4 {
+                return Err(Error::IncompleteFrame {
+                    needed: 4 - buf.len(),
+                });
+            }
+            let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+            (len, 4)
+        }
+        127 => {
+            if buf.len() < 10 {
+                return Err(Error::IncompleteFrame {
+                    needed: 10 - buf.len(),
+                });
+            }
+            let len_u64 = u64::from_be_bytes([
+                buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
+            ]);
+            let len = usize::try_from(len_u64).map_err(|_| Error::PayloadTooLargeForPlatform {
+                size: len_u64,
+                max: usize::MAX as u64,
+            })?;
+            (len, 10)
+        }
+        _ => unreachable!(),
+    };
+
+    // Calculate mask key offset and total header size
+    let mask_offset = header_size;
+    let total_header_size = if masked { header_size + 4 } else { header_size };
+
+    // Check if we have enough data for mask key
+    if masked && buf.len() < total_header_size {
+        return Err(Error::IncompleteFrame {
+            needed: total_header_size - buf.len(),
+        });
+    }
+
+    // Extract mask key if present
+    let mask = if masked {
+        Some([
+            buf[mask_offset],
+            buf[mask_offset + 1],
+            buf[mask_offset + 2],
+            buf[mask_offset + 3],
+        ])
+    } else {
+        None
+    };
+
+    Ok(FrameHeader {
+        fin,
+        rsv1,
+        rsv2,
+        rsv3,
+        opcode,
+        mask,
+        payload_len,
+        header_len: total_header_size,
+    })
+}
 
 /// Internal payload representation for zero-copy optimization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,115 +255,37 @@ impl Frame {
     /// - `Error::ReservedOpcode` if a reserved opcode is used
     #[inline]
     pub fn parse(buf: &[u8]) -> Result<(Self, usize)> {
-        // Need at least 2 bytes for the header
-        if buf.len() < 2 {
-            return Err(Error::IncompleteFrame {
-                needed: 2 - buf.len(),
-            });
-        }
+        let header = parse_header(buf)?;
 
-        let byte0 = buf[0];
-        let byte1 = buf[1];
-
-        // Parse first byte
-        let fin = (byte0 & 0x80) != 0;
-        let rsv1 = (byte0 & 0x40) != 0;
-        let rsv2 = (byte0 & 0x20) != 0;
-        let rsv3 = (byte0 & 0x10) != 0;
-        let opcode = OpCode::from_u8(byte0 & 0x0F)?;
-
-        // Parse second byte
-        let masked = (byte1 & 0x80) != 0;
-        let payload_len_initial = byte1 & 0x7F;
-
-        // Calculate header size and payload length
-        let (payload_len, header_size) = match payload_len_initial {
-            0..=125 => (payload_len_initial as usize, 2),
-            126 => {
-                if buf.len() < 4 {
-                    return Err(Error::IncompleteFrame {
-                        needed: 4 - buf.len(),
-                    });
-                }
-                let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
-                (len, 4)
-            }
-            127 => {
-                if buf.len() < 10 {
-                    return Err(Error::IncompleteFrame {
-                        needed: 10 - buf.len(),
-                    });
-                }
-                let len_u64 = u64::from_be_bytes([
-                    buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
-                ]);
-                let len =
-                    usize::try_from(len_u64).map_err(|_| Error::PayloadTooLargeForPlatform {
-                        size: len_u64,
-                        max: usize::MAX as u64,
-                    })?;
-                (len, 10)
-            }
-            _ => unreachable!(),
-        };
-
-        // Calculate mask key offset and total header size
-        let mask_offset = header_size;
-        let total_header_size = if masked { header_size + 4 } else { header_size };
-
-        // Check if we have enough data for mask key
-        if masked && buf.len() < total_header_size {
-            return Err(Error::IncompleteFrame {
-                needed: total_header_size - buf.len(),
-            });
-        }
-
-        // Calculate total frame size (use checked arithmetic to prevent overflow)
-        let total_size = total_header_size.checked_add(payload_len).ok_or(
+        let total_size = header.header_len.checked_add(header.payload_len).ok_or(
             Error::PayloadTooLargeForPlatform {
-                size: payload_len as u64,
+                size: header.payload_len as u64,
                 max: usize::MAX as u64,
             },
         )?;
 
-        // Check if we have the complete frame
         if buf.len() < total_size {
             return Err(Error::IncompleteFrame {
                 needed: total_size - buf.len(),
             });
         }
 
-        // Extract mask key if present
-        let mask_key = if masked {
-            Some([
-                buf[mask_offset],
-                buf[mask_offset + 1],
-                buf[mask_offset + 2],
-                buf[mask_offset + 3],
-            ])
-        } else {
-            None
-        };
-
-        // Extract payload
-        let payload_start = total_header_size;
-        let payload_end = payload_start + payload_len;
-        let payload = if let Some(mask) = mask_key {
-            // Must copy and unmask
+        let payload_start = header.header_len;
+        let payload_end = payload_start + header.payload_len;
+        let payload = if let Some(mask) = header.mask {
             let mut data = buf[payload_start..payload_end].to_vec();
             apply_mask_simd(&mut data, mask);
             Payload::Owned(data)
         } else {
-            // Copy for owned variant (zero-copy would use borrowed, but requires lifetime)
             Payload::Owned(buf[payload_start..payload_end].to_vec())
         };
 
         let frame = Frame {
-            fin,
-            rsv1,
-            rsv2,
-            rsv3,
-            opcode,
+            fin: header.fin,
+            rsv1: header.rsv1,
+            rsv2: header.rsv2,
+            rsv3: header.rsv3,
+            opcode: header.opcode,
             payload,
         };
 
@@ -271,69 +304,15 @@ impl Frame {
     /// - `Error::ReservedOpcode` if a reserved opcode is used
     #[inline]
     pub fn parse_zero_copy(buf: &Bytes) -> Result<(Self, usize)> {
-        if buf.len() < 2 {
-            return Err(Error::IncompleteFrame {
-                needed: 2 - buf.len(),
-            });
-        }
-
-        let byte0 = buf[0];
-        let byte1 = buf[1];
-
-        let fin = (byte0 & 0x80) != 0;
-        let rsv1 = (byte0 & 0x40) != 0;
-        let rsv2 = (byte0 & 0x20) != 0;
-        let rsv3 = (byte0 & 0x10) != 0;
-        let opcode = OpCode::from_u8(byte0 & 0x0F)?;
-
-        let masked = (byte1 & 0x80) != 0;
-        let payload_len_initial = byte1 & 0x7F;
-
-        let (payload_len, header_size) = match payload_len_initial {
-            0..=125 => (payload_len_initial as usize, 2),
-            126 => {
-                if buf.len() < 4 {
-                    return Err(Error::IncompleteFrame {
-                        needed: 4 - buf.len(),
-                    });
-                }
-                let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
-                (len, 4)
-            }
-            127 => {
-                if buf.len() < 10 {
-                    return Err(Error::IncompleteFrame {
-                        needed: 10 - buf.len(),
-                    });
-                }
-                let len_u64 = u64::from_be_bytes([
-                    buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
-                ]);
-                let len =
-                    usize::try_from(len_u64).map_err(|_| Error::PayloadTooLargeForPlatform {
-                        size: len_u64,
-                        max: usize::MAX as u64,
-                    })?;
-                (len, 10)
-            }
-            _ => unreachable!(),
-        };
-
-        let mask_offset = header_size;
-        let total_header_size = if masked { header_size + 4 } else { header_size };
-
-        if masked && buf.len() < total_header_size {
-            return Err(Error::IncompleteFrame {
-                needed: total_header_size - buf.len(),
-            });
-        }
+        let header = parse_header(buf)?;
 
         let total_size =
-            total_header_size
-                .checked_add(payload_len)
+            header
+                .header_len
+                .checked_add(header.payload_len)
                 .ok_or(Error::FrameTooLarge {
-                    size: payload_len,
-                    max: usize::MAX - total_header_size,
+                    size: header.payload_len,
+                    max: usize::MAX - header.header_len,
                 })?;
 
         if buf.len() < total_size {
@@ -342,20 +321,9 @@ impl Frame {
             });
         }
 
-        let mask_key = if masked {
-            Some([
-                buf[mask_offset],
-                buf[mask_offset + 1],
-                buf[mask_offset + 2],
-                buf[mask_offset + 3],
-            ])
-        } else {
-            None
-        };
-
-        let payload_start = total_header_size;
-        let payload_end = payload_start + payload_len;
-        let payload = if let Some(mask) = mask_key {
+        let payload_start = header.header_len;
+        let payload_end = payload_start + header.payload_len;
+        let payload = if let Some(mask) = header.mask {
             let mut data = buf[payload_start..payload_end].to_vec();
             apply_mask_simd(&mut data, mask);
             Payload::Owned(data)
@@ -364,11 +332,11 @@ impl Frame {
         };
 
         let frame = Frame {
-            fin,
-            rsv1,
-            rsv2,
-            rsv3,
-            opcode,
+            fin: header.fin,
+            rsv1: header.rsv1,
+            rsv2: header.rsv2,
+            rsv3: header.rsv3,
+            opcode: header.opcode,
             payload,
         };
 

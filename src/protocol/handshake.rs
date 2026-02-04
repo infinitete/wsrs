@@ -3,12 +3,58 @@
 //! This module handles the HTTP Upgrade mechanism for establishing WebSocket connections.
 
 use crate::error::{Error, Result};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 
 /// The WebSocket GUID used in the Sec-WebSocket-Accept calculation (RFC 6455).
 pub const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// Parse HTTP headers from an iterator of lines into a case-insensitive HashMap.
+///
+/// Optionally checks for duplicate security-critical headers when `security_headers` is provided.
+///
+/// # Arguments
+/// * `lines` - Iterator over header lines (after the request/status line)
+/// * `security_headers` - Optional slice of header names that should not be duplicated
+///
+/// # Returns
+/// A HashMap with lowercase header names as keys and trimmed values.
+///
+/// # Errors
+/// Returns `Error::InvalidHandshake` if a security-critical header is duplicated.
+fn parse_headers<'a, I>(
+    lines: I,
+    security_headers: Option<&[&str]>,
+) -> Result<HashMap<String, String>>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let mut headers: HashMap<String, String> = HashMap::new();
+
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            let name_lower = name.trim().to_lowercase();
+
+            if let Some(sec_headers) = security_headers
+                && sec_headers.contains(&name_lower.as_str())
+                && headers.contains_key(&name_lower)
+            {
+                return Err(Error::InvalidHandshake(format!(
+                    "Duplicate header: {}",
+                    name.trim()
+                )));
+            }
+
+            headers.insert(name_lower, value.trim().to_string());
+        }
+    }
+
+    Ok(headers)
+}
 
 /// Validate that a header value does not contain CR or LF characters.
 ///
@@ -138,8 +184,7 @@ impl HandshakeRequest {
 
         let path = parts[1].to_string();
 
-        // Parse headers into a case-insensitive map
-        let mut headers: HashMap<String, String> = HashMap::new();
+        // Parse headers with duplicate detection for security-critical headers
         let security_headers = [
             "host",
             "upgrade",
@@ -147,27 +192,7 @@ impl HandshakeRequest {
             "sec-websocket-key",
             "sec-websocket-version",
         ];
-
-        for line in lines {
-            if line.is_empty() {
-                break;
-            }
-            if let Some((name, value)) = line.split_once(':') {
-                let name_lower = name.trim().to_lowercase();
-
-                // Detect duplicate security-critical headers
-                if security_headers.contains(&name_lower.as_str())
-                    && headers.contains_key(&name_lower)
-                {
-                    return Err(Error::InvalidHandshake(format!(
-                        "Duplicate header: {}",
-                        name.trim()
-                    )));
-                }
-
-                headers.insert(name_lower, value.trim().to_string());
-            }
-        }
+        let headers = parse_headers(lines, Some(&security_headers))?;
 
         // Validate Upgrade header
         let upgrade = headers
@@ -373,16 +398,7 @@ impl HandshakeResponse {
             )));
         }
 
-        // Parse headers
-        let mut headers: HashMap<String, String> = HashMap::new();
-        for line in lines {
-            if line.is_empty() {
-                break;
-            }
-            if let Some((name, value)) = line.split_once(':') {
-                headers.insert(name.trim().to_lowercase(), value.trim().to_string());
-            }
-        }
+        let headers = parse_headers(lines, None)?;
 
         // Validate Upgrade header
         let upgrade = headers
