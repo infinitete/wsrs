@@ -14,12 +14,20 @@ fn random_mask_seed() -> u32 {
     if getrandom::getrandom(&mut buf).is_ok() {
         u32::from_le_bytes(buf)
     } else {
-        // Fallback to system time
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u32)
-            .unwrap_or(0x12345678)
+        #[cold]
+        fn fallback() -> u32 {
+            eprintln!(
+                "[rsws] WARNING: getrandom failed, using time-based fallback for WebSocket mask. \
+                 This reduces mask entropy and may weaken security."
+            );
+
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u32)
+                .unwrap_or(0x12345678)
+        }
+        fallback()
     }
 }
 
@@ -150,8 +158,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> WebSocketCodec<T> {
     ///
     /// # Errors
     ///
-    /// Returns `Error::Io` if the write fails.
+    /// - `Error::FrameTooLarge` if payload exceeds configured limits
+    /// - `Error::Io` if the write fails
     pub async fn write_frame(&mut self, frame: &Frame) -> Result<()> {
+        // Validate frame size before allocation
+        let payload_size = frame.payload().len();
+        self.config.limits.check_frame_size(payload_size)?;
+
         let mask = if self.role.must_mask() {
             Some(self.generate_mask())
         } else {

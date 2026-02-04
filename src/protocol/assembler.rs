@@ -79,6 +79,10 @@ impl MessageAssembler {
             validator.validate(frame.payload(), frame.fin)?;
         }
 
+        if self.fragment_count == 0 && !frame.fin {
+            self.buffer.reserve(frame.payload().len() * 4);
+        }
+
         self.total_size = new_size;
         self.buffer.extend_from_slice(frame.payload());
         self.fragment_count += 1;

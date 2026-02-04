@@ -221,6 +221,57 @@ impl Message {
             _ => None,
         }
     }
+
+    /// Get the payload bytes for data messages.
+    ///
+    /// Returns the text content as bytes for Text messages,
+    /// the binary data for Binary messages, or the control frame data.
+    #[inline]
+    #[must_use]
+    pub fn payload(&self) -> &[u8] {
+        match self {
+            Message::Text(s) => s.as_bytes(),
+            Message::Binary(b) => b,
+            Message::Ping(b) => b,
+            Message::Pong(b) => b,
+            Message::Close(Some(cf)) => cf.reason.as_bytes(),
+            Message::Close(None) => &[],
+        }
+    }
+
+    /// Get the length of the payload in bytes.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.payload().len()
+    }
+
+    /// Check if the message payload is empty.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.payload().is_empty()
+    }
+}
+
+use crate::protocol::Frame;
+
+impl From<Message> for Frame {
+    fn from(message: Message) -> Self {
+        match message {
+            Message::Text(text) => Frame::text(text.into_bytes()),
+            Message::Binary(data) => Frame::binary(data),
+            Message::Ping(data) => Frame::ping(data),
+            Message::Pong(data) => Frame::pong(data),
+            Message::Close(close_frame) => {
+                if let Some(cf) = close_frame {
+                    Frame::close(Some(cf.code.as_u16()), &cf.reason)
+                } else {
+                    Frame::close(None, "")
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

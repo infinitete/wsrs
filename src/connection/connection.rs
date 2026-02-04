@@ -2,6 +2,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::codec::WebSocketCodec;
 use crate::config::Config;
+use crate::connection::fragmenter::MessageFragmenter;
 use crate::connection::{ConnectionState, Role};
 use crate::error::{Error, Result};
 use crate::extensions::ExtensionRegistry;
@@ -107,37 +108,61 @@ impl<T> Connection<T> {
 impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
     /// Send a message over the WebSocket connection.
     ///
-    /// Messages are automatically fragmented if they exceed the configured
-    /// fragment size.
+    /// Data messages (Text/Binary) are automatically fragmented if they exceed
+    /// the configured `fragment_size` (default: 16 KB). Control frames (Ping,
+    /// Pong, Close) are never fragmented per RFC 6455.
     ///
     /// ## Errors
     ///
     /// - `Error::ConnectionClosed` if the connection is not in a state that allows sending
-    /// - Other I/O errors from the underlying stream
+    /// - `Error::MessageTooLarge` if the message exceeds `limits.max_message_size`
+    /// - `Error::FrameTooLarge` if a fragment exceeds `limits.max_frame_size`
+    /// - I/O errors from the underlying stream
     pub async fn send(&mut self, message: Message) -> Result<()> {
         if !self.state.can_send() {
             return Err(Error::ConnectionClosed(None));
         }
 
-        let mut frame = match message {
-            Message::Text(text) => Frame::text(text.into_bytes()),
-            Message::Binary(data) => Frame::binary(data),
-            Message::Ping(data) => Frame::ping(data),
-            Message::Pong(data) => Frame::pong(data),
-            Message::Close(close_frame) => {
-                if let Some(cf) = close_frame {
-                    Frame::close(Some(cf.code.as_u16()), &cf.reason)
-                } else {
-                    Frame::close(None, "")
-                }
-            }
-        };
-
-        if frame.opcode.is_data() {
-            self.extensions.encode(&mut frame)?;
+        // Control frames are never fragmented
+        if message.is_control() {
+            let frame = Frame::from(message);
+            self.codec.write_frame(&frame).await?;
+            self.codec.flush().await?;
+            return Ok(());
         }
 
-        self.codec.write_frame(&frame).await?;
+        // Validate message size before processing
+        let payload = message.payload();
+        self.codec.config().limits.check_message_size(payload.len())?;
+
+        let opcode = if message.is_text() {
+            OpCode::Text
+        } else {
+            OpCode::Binary
+        };
+
+        let fragment_size = self.codec.config().fragment_size;
+
+        if payload.len() <= fragment_size {
+            // Small message: single frame with extension encoding
+            let mut frame = Frame::from(message);
+            self.extensions.encode(&mut frame)?;
+            self.codec.write_frame(&frame).await?;
+        } else {
+            // Large message: fragment into multiple frames
+            let fragmenter = MessageFragmenter::new(payload, opcode, fragment_size);
+            let mut is_first = true;
+
+            for mut frame in fragmenter {
+                // RFC 7692: Extension encoding only on first frame
+                if is_first && frame.opcode.is_data() {
+                    self.extensions.encode(&mut frame)?;
+                    is_first = false;
+                }
+                self.codec.write_frame(&frame).await?;
+            }
+        }
+
         self.codec.flush().await?;
         Ok(())
     }
@@ -148,25 +173,42 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
             return Err(Error::ConnectionClosed(None));
         }
 
-        let mut frame = match message {
-            Message::Text(text) => Frame::text(text.into_bytes()),
-            Message::Binary(data) => Frame::binary(data),
-            Message::Ping(data) => Frame::ping(data),
-            Message::Pong(data) => Frame::pong(data),
-            Message::Close(close_frame) => {
-                if let Some(cf) = close_frame {
-                    Frame::close(Some(cf.code.as_u16()), &cf.reason)
-                } else {
-                    Frame::close(None, "")
-                }
-            }
-        };
-
-        if frame.opcode.is_data() {
-            self.extensions.encode(&mut frame)?;
+        // Control frames are never fragmented
+        if message.is_control() {
+            let frame = Frame::from(message);
+            self.codec.write_frame(&frame).await?;
+            return Ok(());
         }
 
-        self.codec.write_frame(&frame).await?;
+        // Validate message size before processing
+        let payload = message.payload();
+        self.codec.config().limits.check_message_size(payload.len())?;
+
+        let opcode = if message.is_text() {
+            OpCode::Text
+        } else {
+            OpCode::Binary
+        };
+
+        let fragment_size = self.codec.config().fragment_size;
+
+        if payload.len() <= fragment_size {
+            let mut frame = Frame::from(message);
+            self.extensions.encode(&mut frame)?;
+            self.codec.write_frame(&frame).await?;
+        } else {
+            let fragmenter = MessageFragmenter::new(payload, opcode, fragment_size);
+            let mut is_first = true;
+
+            for mut frame in fragmenter {
+                if is_first && frame.opcode.is_data() {
+                    self.extensions.encode(&mut frame)?;
+                    is_first = false;
+                }
+                self.codec.write_frame(&frame).await?;
+            }
+        }
+
         Ok(())
     }
 

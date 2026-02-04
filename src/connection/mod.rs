@@ -33,8 +33,14 @@ pub use role::Role;
 pub use state::ConnectionState;
 
 #[cfg(feature = "async-tokio")]
+mod fragmenter;
+
+#[cfg(feature = "async-tokio")]
 #[allow(clippy::module_inception)]
 mod connection;
 
 #[cfg(feature = "async-tokio")]
 pub use connection::Connection;
+
+#[cfg(feature = "async-tokio")]
+pub use fragmenter::MessageFragmenter;
