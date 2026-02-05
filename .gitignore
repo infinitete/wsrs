@@ -2,3 +2,9 @@
 
 # AI assistant working files
 .sisyphus/
+.opencode/
+
+# Node.js
+node_modules/
+dist/
+*.log
