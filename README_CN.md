@@ -327,6 +327,8 @@ cargo bench --bench utf8        # UTF-8 验证吞吐量
 
 ## 示例
 
+### 基础示例
+
 ```bash
 # Echo 服务器
 cargo run --example echo_server
@@ -343,6 +345,43 @@ cargo run --example stress_client
 
 # Autobahn 合规测试
 cargo run --example autobahn_server
+```
+
+### 完整示例
+
+包含 React 前端的完整示例，展示真实应用场景：
+
+| 示例 | 描述 | 特性 |
+|------|------|------|
+| [聊天室](examples/chat_room/) | 多用户实时聊天 | WebSocket 消息、用户在线状态、广播 |
+| [屏幕共享](examples/screen_share/) | WebRTC 屏幕共享 | WebSocket 信令、点对点流媒体 |
+| [文件传输](examples/file_transfer/) | P2P 风格文件传输 | 二进制 WebSocket、分块传输、进度跟踪 |
+
+#### 聊天室
+
+![聊天室截图](examples/chat_room/screenshot.png)
+
+```bash
+cd examples/chat_room/server && cargo run
+cd examples/chat_room/frontend && npm install && npm run dev
+```
+
+#### 屏幕共享
+
+![屏幕共享截图](examples/screen_share/screenshot.png)
+
+```bash
+cd examples/screen_share/server && cargo run
+cd examples/screen_share/frontend && npm install && npm run dev
+```
+
+#### 文件传输
+
+![文件传输截图](examples/file_transfer/screenshot.png)
+
+```bash
+cd examples/file_transfer/server && cargo run
+cd examples/file_transfer/frontend && npm install && npm run dev
 ```
 
 ## 许可证

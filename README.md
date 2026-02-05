@@ -327,6 +327,8 @@ See [autobahn/README.md](autobahn/README.md) for compliance verification.
 
 ## Examples
 
+### Basic Examples
+
 ```bash
 # Echo server
 cargo run --example echo_server
@@ -343,6 +345,43 @@ cargo run --example stress_client
 
 # Autobahn compliance
 cargo run --example autobahn_server
+```
+
+### Full-Stack Examples
+
+Complete examples with React frontends demonstrating real-world use cases:
+
+| Example | Description | Features |
+|---------|-------------|----------|
+| [Chat Room](examples/chat_room/) | Multi-user real-time chat | WebSocket messaging, user presence, broadcast |
+| [Screen Share](examples/screen_share/) | WebRTC screen sharing | WebSocket signaling, peer-to-peer streaming |
+| [File Transfer](examples/file_transfer/) | P2P-style file transfer | Binary WebSocket, chunked transfer, progress tracking |
+
+#### Chat Room
+
+![Chat Room Screenshot](examples/chat_room/screenshot.png)
+
+```bash
+cd examples/chat_room/server && cargo run
+cd examples/chat_room/frontend && npm install && npm run dev
+```
+
+#### Screen Share
+
+![Screen Share Screenshot](examples/screen_share/screenshot.png)
+
+```bash
+cd examples/screen_share/server && cargo run
+cd examples/screen_share/frontend && npm install && npm run dev
+```
+
+#### File Transfer
+
+![File Transfer Screenshot](examples/file_transfer/screenshot.png)
+
+```bash
+cd examples/file_transfer/server && cargo run
+cd examples/file_transfer/frontend && npm install && npm run dev
 ```
 
 ## License
