@@ -445,7 +445,12 @@ impl Extension for DeflateExtension {
                     let bits = Self::parse_window_bits(param.value.as_deref())?;
                     self.config.client_max_window_bits = bits;
                 }
-                _ => {}
+                _ => {
+                    return Err(Error::InvalidExtension(format!(
+                        "Unknown parameter: {}",
+                        param.name
+                    )));
+                }
             }
         }
         self.negotiated = true;

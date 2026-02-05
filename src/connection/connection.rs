@@ -266,17 +266,18 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                 Err(e) => return Err(e),
             };
 
-            frame.validate()?;
-
             match frame.opcode {
                 OpCode::Ping => {
+                    frame.validate()?;
                     self.pending_pong = Some(frame.payload().to_vec());
                     return Ok(Some(Message::Ping(frame.into_payload())));
                 }
                 OpCode::Pong => {
+                    frame.validate()?;
                     return Ok(Some(Message::Pong(frame.into_payload())));
                 }
                 OpCode::Close => {
+                    frame.validate()?;
                     let close_frame = self.parse_close_frame(&frame);
 
                     if self.state == ConnectionState::Open {
@@ -294,8 +295,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
                     return Ok(Some(Message::Close(close_frame)));
                 }
                 OpCode::Text | OpCode::Binary | OpCode::Continuation => {
-                    let mut frame = frame;
-                    self.extensions.decode(&mut frame)?;
+                    frame.validate()?;
                     if let Some(assembled) = self.assembler.push(frame)? {
                         return Ok(Some(self.assembled_to_message(assembled)?));
                     }
@@ -367,13 +367,22 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Connection<T> {
         }
     }
 
-    fn assembled_to_message(&self, assembled: AssembledMessage) -> Result<Message> {
+    fn assembled_to_message(&mut self, assembled: AssembledMessage) -> Result<Message> {
+        let payload = if assembled.rsv1 && self.extensions.negotiated_count() > 0 {
+            let mut frame = Frame::new(true, assembled.opcode, assembled.payload);
+            frame.rsv1 = true;
+            self.extensions.decode(&mut frame)?;
+            frame.into_payload()
+        } else {
+            assembled.payload
+        };
+
         match assembled.opcode {
             OpCode::Text => {
-                let text = assembled.into_text()?;
+                let text = String::from_utf8(payload).map_err(|_| Error::InvalidUtf8)?;
                 Ok(Message::Text(text))
             }
-            OpCode::Binary => Ok(Message::Binary(assembled.into_binary())),
+            OpCode::Binary => Ok(Message::Binary(payload)),
             _ => Err(Error::ProtocolViolation("Unexpected opcode".into())),
         }
     }

@@ -18,6 +18,8 @@ pub struct MessageAssembler {
     total_size: usize,
     utf8_validator: Option<Utf8Validator>,
     config: Config,
+    /// RSV1 from first frame (RFC 7692: compression flag)
+    first_frame_rsv1: bool,
 }
 
 impl MessageAssembler {
@@ -30,6 +32,7 @@ impl MessageAssembler {
             total_size: 0,
             utf8_validator: None,
             config,
+            first_frame_rsv1: false,
         }
     }
 
@@ -62,6 +65,7 @@ impl MessageAssembler {
                 ));
             }
             self.opcode = Some(frame.opcode);
+            self.first_frame_rsv1 = frame.rsv1;
 
             if frame.opcode == OpCode::Text {
                 self.utf8_validator = Some(Utf8Validator::new());
@@ -94,10 +98,16 @@ impl MessageAssembler {
                     "Internal error: opcode not set during message assembly".into(),
                 )
             })?;
+            let rsv1 = self.first_frame_rsv1;
             self.total_size = 0;
             self.fragment_count = 0;
             self.utf8_validator = None;
-            Ok(Some(AssembledMessage { opcode, payload }))
+            self.first_frame_rsv1 = false;
+            Ok(Some(AssembledMessage {
+                opcode,
+                payload,
+                rsv1,
+            }))
         } else {
             Ok(None)
         }
@@ -119,6 +129,7 @@ impl MessageAssembler {
         self.opcode = None;
         self.total_size = 0;
         self.utf8_validator = None;
+        self.first_frame_rsv1 = false;
     }
 }
 
@@ -128,6 +139,8 @@ pub struct AssembledMessage {
     pub opcode: OpCode,
     /// The complete message payload.
     pub payload: Vec<u8>,
+    /// RSV1 from first frame (RFC 7692: indicates compression)
+    pub rsv1: bool,
 }
 
 impl AssembledMessage {
@@ -307,6 +320,7 @@ mod tests {
         let msg = AssembledMessage {
             opcode: OpCode::Text,
             payload: b"Hello".to_vec(),
+            rsv1: false,
         };
         assert_eq!(msg.into_text().unwrap(), "Hello");
     }

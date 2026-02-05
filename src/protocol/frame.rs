@@ -347,25 +347,21 @@ impl Frame {
     ///
     /// # Errors
     ///
-    /// - `Error::ReservedBitsSet` if RSV bits are set without extension
     /// - `Error::FragmentedControlFrame` if control frame has FIN=0
     /// - `Error::ControlFrameTooLarge` if control frame payload > 125 bytes
+    /// - `Error::ReservedBitsSet` if RSV bits set on control frames
     pub fn validate(&self) -> Result<()> {
-        // Check reserved bits (must be 0 without extensions)
-        if self.rsv1 || self.rsv2 || self.rsv3 {
-            return Err(Error::ReservedBitsSet);
-        }
-
-        // Control frame validations
         if self.opcode.is_control() {
-            // Control frames must not be fragmented
             if !self.fin {
                 return Err(Error::FragmentedControlFrame);
             }
 
-            // Control frame payload must be <= 125 bytes
             if self.payload().len() > MAX_CONTROL_FRAME_PAYLOAD {
                 return Err(Error::ControlFrameTooLarge(self.payload().len()));
+            }
+
+            if self.rsv1 || self.rsv2 || self.rsv3 {
+                return Err(Error::ReservedBitsSet);
             }
         }
 
@@ -692,12 +688,21 @@ mod tests {
     // Test 14: Reserved bits set (should fail validation)
     // --------------------------------------------------------------------------
     #[test]
-    fn test_validate_reserved_bits_set() {
-        let mut frame = Frame::text(b"test".to_vec());
+    fn test_validate_reserved_bits_set_on_control_frame() {
+        let mut frame = Frame::ping(b"test".to_vec());
         frame.rsv1 = true;
 
         let result = frame.validate();
         assert!(matches!(result, Err(Error::ReservedBitsSet)));
+    }
+
+    #[test]
+    fn test_validate_reserved_bits_allowed_on_data_frame() {
+        let mut frame = Frame::text(b"test".to_vec());
+        frame.rsv1 = true;
+
+        let result = frame.validate();
+        assert!(result.is_ok());
     }
 
     // --------------------------------------------------------------------------
@@ -935,14 +940,12 @@ mod tests {
     // --------------------------------------------------------------------------
     #[test]
     fn test_parse_rsv_bits_set() {
-        // FIN=1, RSV1=1, opcode=1 (text), unmasked, len=0
         let data = &[0xc1, 0x00]; // 0xc1 = 1100 0001 (FIN + RSV1 + Text)
         let (frame, _) = Frame::parse(data).unwrap();
         assert!(frame.rsv1);
         assert!(!frame.rsv2);
         assert!(!frame.rsv3);
-        // Validation should fail
-        assert!(matches!(frame.validate(), Err(Error::ReservedBitsSet)));
+        assert!(frame.validate().is_ok());
     }
 
     // --------------------------------------------------------------------------
