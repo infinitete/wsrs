@@ -38,6 +38,9 @@ rcgen = "0.13"
 criterion = "0.5"
 futures = "0.3"
 tempfile = "3.10"
+axum = "0.8"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 
 [[bench]]
 name = "benchmarks"
@@ -46,6 +49,10 @@ harness = false
 [[bench]]
 name = "utf8"
 harness = false
+
+[[example]]
+name = "axum_server"
+path = "examples/axum_server.rs"
 
 [[example]]
 name = "stress_server"
