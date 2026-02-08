@@ -325,6 +325,59 @@ cargo bench --bench utf8        # UTF-8 验证吞吐量
 
 详见 [autobahn/README.md](autobahn/README.md)。
 
+## 框架集成
+
+### Axum
+
+rsws 可以作为 [Axum](https://github.com/tokio-rs/axum) HTTP 服务器中的 WebSocket 协议处理器。核心思路：让 Axum 处理 HTTP 路由，手动完成升级握手，然后将原始 I/O 流传递给 rsws。
+
+```rust
+use axum::extract::Request;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use hyper_util::rt::TokioIo;
+use rsws::{Config, Connection, Message, Role, compute_accept_key};
+
+async fn ws_handler(mut req: Request) -> Response {
+    // 1. 从升级请求中提取客户端密钥
+    let sec_key = req.headers()
+        .get("sec-websocket-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap()
+        .to_owned();
+
+    // 2. 使用 rsws 计算 accept key
+    let accept_key = compute_accept_key(&sec_key);
+
+    // 3. 启动任务处理升级后的连接
+    tokio::spawn(async move {
+        let upgraded = hyper::upgrade::on(&mut req).await.unwrap();
+        let io = TokioIo::new(upgraded);
+
+        let mut conn = Connection::new(io, Role::Server, Config::server());
+        while let Ok(Some(msg)) = conn.recv().await {
+            match msg {
+                Message::Text(text) => { conn.send(Message::text(text)).await.ok(); }
+                Message::Binary(data) => { conn.send(Message::binary(data)).await.ok(); }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+    });
+
+    // 4. 返回 101 Switching Protocols 完成握手
+    Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(header::UPGRADE, "websocket")
+        .header(header::CONNECTION, "Upgrade")
+        .header("Sec-WebSocket-Accept", accept_key)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+```
+
+完整示例参见 [`examples/axum_server.rs`](examples/axum_server.rs)，包含浏览器测试页面。
+
 ## 示例
 
 ### 基础示例
@@ -335,6 +388,9 @@ cargo run --example echo_server
 
 # 客户端
 cargo run --example client
+
+# Axum 集成（浏览器测试页面 http://127.0.0.1:9001）
+cargo run --example axum_server
 
 # WSS 客户端（TLS）
 cargo run --example wss_client --features tls-rustls

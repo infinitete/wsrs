@@ -325,6 +325,59 @@ cargo bench --bench utf8        # UTF-8 validation throughput
 
 See [autobahn/README.md](autobahn/README.md) for compliance verification.
 
+## Framework Integration
+
+### Axum
+
+rsws can be used as the WebSocket protocol handler in an [Axum](https://github.com/tokio-rs/axum) HTTP server. The key idea: let Axum handle HTTP routing, perform the upgrade handshake manually, then pass the raw I/O stream to rsws.
+
+```rust
+use axum::extract::Request;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use hyper_util::rt::TokioIo;
+use rsws::{Config, Connection, Message, Role, compute_accept_key};
+
+async fn ws_handler(mut req: Request) -> Response {
+    // 1. Extract the client's key from the upgrade request
+    let sec_key = req.headers()
+        .get("sec-websocket-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap()
+        .to_owned();
+
+    // 2. Compute the accept key using rsws
+    let accept_key = compute_accept_key(&sec_key);
+
+    // 3. Spawn a task to handle the upgraded connection
+    tokio::spawn(async move {
+        let upgraded = hyper::upgrade::on(&mut req).await.unwrap();
+        let io = TokioIo::new(upgraded);
+
+        let mut conn = Connection::new(io, Role::Server, Config::server());
+        while let Ok(Some(msg)) = conn.recv().await {
+            match msg {
+                Message::Text(text) => { conn.send(Message::text(text)).await.ok(); }
+                Message::Binary(data) => { conn.send(Message::binary(data)).await.ok(); }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+    });
+
+    // 4. Return 101 Switching Protocols to complete the handshake
+    Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(header::UPGRADE, "websocket")
+        .header(header::CONNECTION, "Upgrade")
+        .header("Sec-WebSocket-Accept", accept_key)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+```
+
+See [`examples/axum_server.rs`](examples/axum_server.rs) for a complete working example with an HTML test page.
+
 ## Examples
 
 ### Basic Examples
@@ -335,6 +388,9 @@ cargo run --example echo_server
 
 # Client
 cargo run --example client
+
+# Axum integration (with browser test page at http://127.0.0.1:9001)
+cargo run --example axum_server
 
 # WSS client (TLS)
 cargo run --example wss_client --features tls-rustls
